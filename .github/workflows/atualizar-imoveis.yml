@@ -1,0 +1,29 @@
+name: Atualizar Radar de Leilões Caixa
+
+on:
+  schedule:
+    # 08:15 em Brasília (11:15 UTC) — a Caixa costuma atualizar a lista de madrugada.
+    # Ajuste ou adicione mais horários aqui se quiser rodar mais vezes ao dia.
+    - cron: "15 11 * * *"
+  workflow_dispatch: {}  # permite rodar manualmente pela aba "Actions" no GitHub
+
+jobs:
+  buscar-imoveis:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Rodar busca de imóveis
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python scripts/buscar_imoveis.py
