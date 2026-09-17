@@ -2,9 +2,10 @@ name: Atualizar Radar de Leilões Caixa
 
 on:
   schedule:
-    # 08:15 em Brasília (11:15 UTC) — a Caixa costuma atualizar a lista de madrugada.
-    # Ajuste ou adicione mais horários aqui se quiser rodar mais vezes ao dia.
-    - cron: "15 11 * * *"
+    # Horários em Brasília (UTC-3) — GitHub Actions usa UTC, por isso a diferença:
+    - cron: "0 13 * * *"   # 10:00 em Brasília
+    - cron: "0 18 * * *"   # 15:00 em Brasília
+    - cron: "0 23 * * *"   # 20:00 em Brasília
   workflow_dispatch: {}  # permite rodar manualmente pela aba "Actions" no GitHub
 
 jobs:
