@@ -406,6 +406,7 @@ def registrar_historico(lote: list[dict]) -> None:
 
 
 def main() -> int:
+    print(f"[debug] URL tem {len(SUPABASE_URL)} caracteres, termina em: {SUPABASE_URL[-30:]!r}")
     parser = argparse.ArgumentParser(description="Radar de Leilões Caixa — roda no GitHub Actions, grava no Supabase.")
     parser.add_argument("--sem-detalhes", action="store_true",
                          help="pula a busca da página individual de cada imóvel (mais rápido, menos dados)")
