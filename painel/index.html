@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Radar de Leilões — Caixa</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --azul:#1c60ab; --azul-escuro:#0d3866; --azul-suave:#e9f1fa;
+    --laranja:#ef9c00; --laranja-escuro:#c97e00;
+    --bg:#f1f4f8; --card:#fff; --line:#dbe2ea; --ink:#122437; --ink-soft:#5b6b7c;
+    --red:#c0392b; --red-bg:#fbeae8;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Inter',system-ui,sans-serif;line-height:1.5;}
+  h1,h2,h3{font-family:'Inter',sans-serif;font-weight:800;letter-spacing:-0.01em;margin:0;}
+
+  /* ---- aviso de prévia ---- */
+  /* ---- login ---- */
+  #login-screen{display:flex;min-height:100vh;align-items:center;justify-content:center;background:var(--azul);}
+  #login-screen.oculto{display:none;}
+  .login-card{width:100%;max-width:340px;padding:32px;background:#fff;border-radius:8px;border-top:4px solid var(--laranja);box-shadow:0 10px 30px rgba(0,0,0,.2);}
+  .campo-senha{position:relative;}
+  .campo-senha input{padding-right:40px;}
+  .login-card .btn-mostrar-senha{position:absolute;right:10px;top:50%;transform:translateY(-50%);width:auto;background:none;border:none;outline:none;cursor:pointer;color:var(--ink-soft);padding:0;display:flex;}
+  .login-card .btn-mostrar-senha:hover{background:none;color:var(--ink);}
+  .btn-mostrar-senha svg{width:19px;height:19px;}
+  .login-card h2{font-size:22px;color:var(--azul-escuro);margin-bottom:4px;}
+  .login-card p.sub{color:var(--ink-soft);font-size:13px;margin:0 0 20px;}
+  .login-card label{display:block;font-size:12px;color:var(--ink-soft);margin:0 0 4px;}
+  .login-card input{width:100%;font-family:'Inter',sans-serif;font-size:14px;padding:10px 11px;border:1px solid var(--line);border-radius:6px;background:var(--bg);margin-bottom:14px;}
+  .login-card button{width:100%;font-family:'Inter',sans-serif;font-weight:700;font-size:14px;padding:11px;border-radius:6px;border:none;background:var(--laranja);color:#fff;cursor:pointer;}
+  .login-card button:hover{background:var(--laranja-escuro);}
+  #login-erro{color:var(--red);font-size:13px;margin-top:12px;display:none;}
+
+  /* ---- app ---- */
+  #app{display:none;}
+  #app.ativo{display:block;}
+  header.top{background:var(--azul);border-bottom:4px solid var(--laranja);padding:22px 32px;display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:14px;}
+  header.top h1{font-size:22px;color:#fff;}
+  header.top p{margin:4px 0 0;color:#cfe1f4;font-size:13px;}
+  .usuario-topo{display:flex;align-items:center;gap:10px;font-size:13px;color:#cfe1f4;}
+  .btn-sair{font-size:13px;font-weight:700;padding:6px 12px;border-radius:6px;border:1px solid rgba(255,255,255,0.4);background:transparent;color:#fff;cursor:pointer;}
+
+  nav.tabs{display:flex;gap:4px;padding:0 32px;border-bottom:1px solid var(--line);background:var(--card);}
+  nav.tabs button{font-family:'Inter',sans-serif;font-size:14px;font-weight:700;padding:14px 6px;margin-right:24px;border:none;background:none;color:var(--ink-soft);cursor:pointer;border-bottom:3px solid transparent;}
+  nav.tabs button.active{color:var(--azul);border-bottom-color:var(--laranja);}
+
+  main{max-width:960px;margin:0 auto;padding:28px 32px 80px;}
+  section.view{display:none;}
+  section.view.active{display:block;}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:20px;box-shadow:0 1px 2px rgba(18,36,55,.05);}
+
+  /* ---- filtros ---- */
+  form#form-filtro{display:grid;grid-template-columns:1.2fr 0.5fr 1fr 1.2fr 1fr 1fr auto;gap:12px;align-items:end;margin-bottom:26px;}
+  form#form-filtro label{display:block;font-size:12px;color:var(--ink-soft);margin-bottom:4px;}
+  form#form-filtro input, form#form-filtro select{width:100%;font-family:'Inter',sans-serif;font-size:14px;padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;}
+  form#form-filtro button{font-family:'Inter',sans-serif;font-weight:700;font-size:14px;padding:10px 14px;border-radius:6px;border:none;background:var(--laranja);color:#fff;cursor:pointer;white-space:nowrap;}
+  form#form-filtro button:hover{background:var(--laranja-escuro);}
+
+  .lista-filtros{display:flex;flex-direction:column;gap:10px;}
+  .filtro-item{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 18px;border-left:3px solid var(--azul);}
+  .filtro-item.inativo{opacity:0.5;border-left-color:var(--line);}
+  .filtro-info b{font-size:15px;color:var(--azul-escuro);}
+  .filtro-info .meta{font-size:13px;color:var(--ink-soft);margin-top:2px;}
+  .filtro-acoes{display:flex;gap:8px;flex-shrink:0;}
+  .filtro-acoes button{font-family:'Inter',sans-serif;font-size:13px;padding:6px 12px;border-radius:6px;border:1px solid var(--line);background:#fff;cursor:pointer;}
+  .filtro-acoes button.excluir{color:var(--red);border-color:var(--red-bg);}
+  .filtro-acoes button.excluir:hover{background:var(--red-bg);}
+
+  /* ---- resultados / favoritos ---- */
+  .barra-topo{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;align-items:center;}
+  .barra-topo input, .barra-topo select{font-family:'Inter',sans-serif;font-size:14px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:#fff;}
+  .barra-topo input{flex:1;min-width:160px;}
+  .contagem{font-size:13px;color:var(--ink-soft);margin-bottom:14px;}
+
+  .bairro-filtro{position:relative;}
+  .bairro-filtro summary{list-style:none;cursor:pointer;font-family:'Inter',sans-serif;font-size:14px;padding:8px 12px;border:1px solid var(--line);border-radius:6px;background:#fff;white-space:nowrap;}
+  .bairro-filtro summary::-webkit-details-marker{display:none;}
+  .bairro-filtro summary::after{content:' ▾';color:var(--azul);}
+  .bairro-filtro[open] summary::after{content:' ▴';}
+  .bairro-filtro-painel{position:absolute;z-index:5;top:calc(100% + 4px);left:0;min-width:300px;max-height:260px;overflow-y:auto;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;box-shadow:0 6px 18px rgba(18,36,55,.12);}
+  .bairro-filtro-acoes{display:flex;justify-content:space-between;font-size:12px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--line);}
+  .bairro-filtro-acoes button{background:none;border:none;color:var(--azul);font-weight:700;font-size:12px;cursor:pointer;padding:0;}
+  #bairro-filtro-lista{display:flex;flex-direction:column;}
+  .bairro-filtro-item{display:flex;align-items:center;gap:8px;font-size:13px;padding:6px 2px;}
+  .bairro-filtro-item input{flex:0 0 auto;margin:0;}
+  .bairro-filtro-item .nome-bairro{white-space:nowrap;flex:1;}
+  .bairro-filtro-item span.contagem{color:var(--ink-soft);white-space:nowrap;margin-left:8px;}
+
+  .grupo-bairro{margin-bottom:22px;}
+  .grupo-bairro-titulo{font-size:15px;font-weight:700;color:var(--azul-escuro);margin:0 0 10px;padding-bottom:6px;border-bottom:2px solid var(--azul-suave);display:flex;justify-content:space-between;}
+  .grupo-bairro-titulo span.n{font-weight:400;font-size:13px;color:var(--ink-soft);}
+
+  .imovel{padding:18px 20px;border-top:3px solid var(--azul);margin-bottom:14px;}
+  .imovel-topo{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;}
+  .imovel-numero{font-size:12px;font-family:ui-monospace,monospace;color:var(--ink-soft);margin-bottom:3px;}
+  .badges-filtro{margin-bottom:6px;}
+  .imovel-local{font-size:16px;font-weight:700;color:var(--azul-escuro);}
+  .imovel-endereco{font-size:13px;color:var(--ink-soft);margin-top:2px;}
+  .link-maps{margin-left:8px;font-size:12px;color:var(--azul);font-weight:600;text-decoration:none;white-space:nowrap;}
+  .link-maps:hover{color:var(--laranja-escuro);}
+  .imovel-valor{display:flex;flex-direction:column;align-items:flex-end;font-size:20px;font-weight:800;color:var(--azul);white-space:nowrap;}
+  .rotulo-valor{font-size:10px;font-weight:600;color:var(--ink-soft);margin-top:2px;}
+  .chip{display:inline-block;font-size:12px;padding:3px 10px;border:1px solid var(--line);border-radius:20px;color:var(--ink-soft);margin-right:6px;margin-top:8px;background:#fff;}
+  .badge{display:inline-block;font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;background:var(--azul-suave);color:var(--azul);margin-right:6px;}
+  .badge.novo{background:var(--laranja);color:#fff;}
+  .situacoes{margin-top:12px;border-top:1px solid var(--line);padding-top:10px;display:flex;flex-direction:column;gap:6px;}
+  .situacao-item{display:flex;gap:10px;align-items:baseline;font-size:13px;flex-wrap:wrap;}
+  .situacao-item.passado{text-decoration:line-through;color:var(--ink-soft);opacity:0.65;}
+  .situacao-cabecalho{font-size:12px;font-weight:700;color:var(--ink-soft);margin-top:2px;}
+  .situacao-valor{font-weight:700;color:var(--azul-escuro);text-align:right;white-space:nowrap;}
+  .extras{margin-top:10px;display:flex;flex-wrap:wrap;gap:4px 18px;font-size:12px;color:var(--ink-soft);}
+  .linha-extra span:first-child{font-weight:600;color:var(--ink);margin-right:4px;}
+  .imovel-rodape{display:flex;justify-content:space-between;align-items:center;margin-top:12px;font-size:13px;}
+  .imovel-rodape a{color:var(--azul);font-weight:700;text-decoration:none;}
+  .imovel-rodape a:hover{text-decoration:underline;color:var(--laranja-escuro);}
+  .icones-topo{display:flex;gap:8px;margin-bottom:6px;}
+  .btn-icone{width:40px;height:40px;border-radius:8px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;}
+  .btn-icone svg{width:20px;height:20px;}
+  .btn-icone.favorito{background:var(--line);}
+  .btn-icone.favorito.ativo{background:var(--laranja);}
+  .btn-icone.descartar{background:#e0453c;}
+  .btn-icone.descartar:hover{background:#c73a32;}
+  .vazio{text-align:center;padding:60px 20px;color:var(--ink-soft);}
+  .vazio h3{color:var(--ink);margin-bottom:6px;}
+  .aviso-descartados{font-size:13px;color:var(--ink-soft);margin:0 0 16px;}
+  .item-descartado{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:14px 18px;background:#fff;border:1px solid var(--line);border-radius:8px;margin-bottom:8px;}
+  .item-descartado-info{min-width:0;}
+  .item-descartado-local{font-size:14px;font-weight:700;color:var(--azul-escuro);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .item-descartado-endereco{font-size:12px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .item-descartado-acoes{display:flex;align-items:center;gap:14px;flex-shrink:0;}
+  .item-descartado-valor{font-weight:700;color:var(--azul);font-size:14px;white-space:nowrap;}
+  .item-descartado-acoes a{color:var(--azul);font-size:13px;font-weight:600;text-decoration:none;white-space:nowrap;}
+  .item-descartado-acoes a:hover{text-decoration:underline;}
+  .btn-restaurar{font-family:'Inter',sans-serif;font-size:13px;font-weight:600;padding:6px 12px;border-radius:6px;border:1px solid var(--azul);background:#fff;color:var(--azul);cursor:pointer;white-space:nowrap;}
+  .btn-restaurar:hover{background:var(--azul-suave);}
+</style>
+</head>
+<body>
+
+<div id="login-screen">
+  <div class="login-card">
+    <h2>Radar de Leilões — Caixa</h2>
+    <p class="sub">Entre com seu login.</p>
+    <label>E-mail</label>
+    <input id="input-email" type="email" placeholder="voce@exemplo.com">
+    <label>Senha</label>
+    <div class="campo-senha">
+      <input id="input-senha" type="password" placeholder="••••••••">
+      <button type="button" class="btn-mostrar-senha" id="btn-mostrar-senha" title="Mostrar senha">
+        <svg viewBox="0 0 24 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 7c2.5-4 7-6 10-6s7.5 2 10 6"/><line x1="5" y1="9" x2="3.5" y2="11.7"/><line x1="9" y1="10.6" x2="8.3" y2="13.3"/><line x1="15" y1="10.6" x2="15.7" y2="13.3"/><line x1="19" y1="9" x2="20.5" y2="11.7"/></svg>
+      </button>
+    </div>
+    <button id="btn-entrar">Entrar</button>
+    <div id="login-erro"></div>
+  </div>
+</div>
+
+<div id="app">
+  <header class="top">
+    <div>
+      <h1>Radar de Leilões — Caixa</h1>
+      <p>Filtros salvos verificam a lista oficial da Caixa todo dia.</p>
+    </div>
+    <div class="usuario-topo">
+      <span id="usuario-logado"></span>
+      <button class="btn-sair" id="btn-sair">Sair</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button data-tab="filtros" class="active">Filtros</button>
+    <button data-tab="resultados">Resultados</button>
+    <button data-tab="favoritos">Favoritos</button>
+    <button data-tab="descartados">Descartados</button>
+  </nav>
+
+  <main>
+
+    <section class="view active" id="view-filtros">
+      <form id="form-filtro">
+        <div><label>Nome do alerta</label><input id="f-nome" placeholder="ex: Salvador 400-750k" required></div>
+        <div><label>Estado</label>
+          <select id="f-estado" required>
+            <option value="">UF</option>
+            <option>AC</option><option>AL</option><option>AP</option><option>AM</option>
+            <option>BA</option><option>CE</option><option>DF</option><option>ES</option>
+            <option>GO</option><option>MA</option><option>MT</option><option>MS</option>
+            <option>MG</option><option>PA</option><option>PB</option><option>PR</option>
+            <option>PE</option><option>PI</option><option>RJ</option><option>RN</option>
+            <option>RS</option><option>RO</option><option>RR</option><option>SC</option>
+            <option>SP</option><option>SE</option><option>TO</option>
+          </select>
+        </div>
+        <div><label>Cidade</label><input id="f-cidade" placeholder="ex: Salvador" required></div>
+        <div><label>Bairros (vírgula — vazio = qualquer um)</label><input id="f-bairros" placeholder="ex: Pituba, Rio Vermelho"></div>
+        <div><label>Valor mín.</label><input id="f-valor-min" type="text" inputmode="decimal" placeholder="ex: 100.000"></div>
+        <div><label>Valor máx.</label><input id="f-valor-max" type="text" inputmode="decimal" placeholder="ex: 750.000"></div>
+        <button type="submit" id="btn-salvar-filtro">Adicionar alerta</button>
+        <button type="button" id="btn-cancelar-edicao" onclick="cancelarEdicaoFiltro()" style="display:none;background:#fff;color:var(--ink-soft);border:1px solid var(--line);">Cancelar</button>
+      </form>
+      <div class="lista-filtros" id="lista-filtros"></div>
+    </section>
+
+    <section class="view" id="view-resultados">
+      <div class="barra-topo">
+        <input id="busca" placeholder="Buscar por endereço, bairro, cidade...">
+        <select id="filtro-origem"><option value="">Todos os filtros</option></select>
+        <details class="bairro-filtro" id="bairro-filtro">
+          <summary id="bairro-filtro-resumo">Todos os bairros</summary>
+          <div class="bairro-filtro-painel">
+            <div class="bairro-filtro-acoes">
+              <button type="button" onclick="limparSelecaoBairros()">Limpar seleção</button>
+              <button type="button" onclick="document.getElementById('bairro-filtro').removeAttribute('open')">Fechar</button>
+            </div>
+            <div id="bairro-filtro-lista"></div>
+          </div>
+        </details>
+        <select id="ordenar">
+          <option value="bairro">Agrupar por bairro</option>
+          <option value="valor-asc">Valor crescente</option>
+          <option value="valor-desc">Valor decrescente</option>
+        </select>
+      </div>
+      <div class="contagem" id="contagem"></div>
+      <div id="grid-resultados"></div>
+    </section>
+
+    <section class="view" id="view-favoritos">
+      <div class="contagem" id="contagem-favoritos"></div>
+      <div id="grid-favoritos"></div>
+    </section>
+
+    <section class="view" id="view-descartados">
+      <p class="aviso-descartados">Imóveis marcados como "sem interesse" — não aparecem em Resultados nem Favoritos, mas ficam aqui caso queira reconsiderar.</p>
+      <div class="contagem" id="contagem-descartados"></div>
+      <div id="lista-descartados"></div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+// ---------------- conexão e login (Supabase Auth) ----------------
+let sb = null;
+
+// nomes de exibição — e-mails que não estiverem aqui aparecem como o
+// próprio e-mail mesmo (não precisa cadastrar todo mundo pra funcionar)
+const NOMES_USUARIOS = {
+  'tiago.d.mascarenhas@gmail.com': 'Tiago Mascarenhas',
+  'lsboissard@gmail.com': 'Leonardo Boissard',
+};
+
+async function mostrarApp(email){
+  mostrarCarregando();
+  const nome = NOMES_USUARIOS[email] || email || '';
+  await Promise.all([carregarFiltros(), carregarTudo()]);
+  document.getElementById('login-screen').classList.add('oculto');
+  document.getElementById('app').classList.add('ativo');
+  document.getElementById('usuario-logado').textContent = 'Olá, ' + nome;
+}
+
+function mostrarCarregando(){
+  document.getElementById('login-erro').style.display = 'none';
+  document.getElementById('btn-entrar').disabled = true;
+  document.getElementById('btn-entrar').textContent = 'Entrando...';
+}
+
+function mostrarLogin(mensagemErro){
+  document.getElementById('app').classList.remove('ativo');
+  document.getElementById('login-screen').classList.remove('oculto');
+  document.getElementById('btn-entrar').disabled = false;
+  document.getElementById('btn-entrar').textContent = 'Entrar';
+  const erro = document.getElementById('login-erro');
+  if(mensagemErro){ erro.textContent = mensagemErro; erro.style.display = 'block'; }
+  else { erro.style.display = 'none'; }
+}
+
+// URL e chave anon do projeto Supabase — fixas aqui, não precisa mais digitar
+// no login. A anon key é feita pra ficar pública (protegida pelo RLS do banco).
+const SUPABASE_URL_FIXO = 'https://dapyrjozckobyrbbwlmb.supabase.co';
+const SUPABASE_ANON_KEY_FIXO = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRhcHlyam96Y2tvYnlyYmJ3bG1iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk2NDE3NzQsImV4cCI6MjEwNTIxNzc3NH0.jRz1kpBHpQL5V2XBgbNQUqZuj0leN87D9FpPpmMAt4M';
+
+function garantirCliente(){
+  if(!sb){
+    sb = supabase.createClient(SUPABASE_URL_FIXO, SUPABASE_ANON_KEY_FIXO, { auth: { persistSession: true, autoRefreshToken: true } });
+  }
+  return sb;
+}
+
+async function tentarLogin(){
+  const cliente = garantirCliente();
+  const email = document.getElementById('input-email').value.trim();
+  const senha = document.getElementById('input-senha').value;
+  const { error } = await cliente.auth.signInWithPassword({ email, password: senha });
+  if(error){ mostrarLogin('Não foi possível entrar: ' + error.message); return; }
+  await mostrarApp(email);
+}
+
+document.getElementById('btn-entrar').addEventListener('click', tentarLogin);
+const SVG_OLHO_FECHADO = `<svg viewBox="0 0 24 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 7c2.5-4 7-6 10-6s7.5 2 10 6"/><line x1="5" y1="9" x2="3.5" y2="11.7"/><line x1="9" y1="10.6" x2="8.3" y2="13.3"/><line x1="15" y1="10.6" x2="15.7" y2="13.3"/><line x1="19" y1="9" x2="20.5" y2="11.7"/></svg>`;
+const SVG_OLHO_ABERTO = `<svg viewBox="0 0 24 20" fill="currentColor"><path d="M12 4c-6 0-10.5 5-11 6.5C1.5 12 6 17 12 17s10.5-5 11-6.5C22.5 9 18 4 12 4z"/><circle cx="12" cy="10.5" r="3.2" fill="var(--bg)"/><circle cx="12" cy="10.5" r="1.4"/><line x1="5" y1="4.5" x2="4" y2="2.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="9.5" y1="3.2" x2="9" y2="1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="14.5" y1="3.2" x2="15" y2="1" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><line x1="19" y1="4.5" x2="20" y2="2.5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>`;
+
+document.getElementById('btn-mostrar-senha').addEventListener('click', () => {
+  const campo = document.getElementById('input-senha');
+  const botao = document.getElementById('btn-mostrar-senha');
+  const mostrando = campo.type === 'text';
+  campo.type = mostrando ? 'password' : 'text';
+  botao.title = mostrando ? 'Mostrar senha' : 'Esconder senha';
+  botao.innerHTML = mostrando ? SVG_OLHO_FECHADO : SVG_OLHO_ABERTO;
+});
+['input-email', 'input-senha'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', e => {
+    if (e.key === 'Enter') tentarLogin();
+  });
+});
+document.getElementById('btn-sair').addEventListener('click', async () => {
+  if(sb) await sb.auth.signOut();
+  mostrarLogin();
+});
+
+// se já houver sessão válida salva no navegador, entra direto sem pedir login de novo
+window.addEventListener('DOMContentLoaded', async () => {
+  const cliente = garantirCliente();
+  const { data } = await cliente.auth.getSession();
+  if(data && data.session){
+    await mostrarApp(data.session.user.email);
+  }
+});
+
+// ---------------- dados ----------------
+let filtrosCache = [];
+let resultadosCache = [];
+
+async function carregarFiltros(){
+  const { data, error } = await sb.from('filtros').select('*').order('criado_em', { ascending: false });
+  if(error){ console.error(error); return; }
+  filtrosCache = data || [];
+  renderFiltros();
+  preencherSelectOrigem();
+}
+
+let descartadosCache = [];
+
+async function carregarTudo(){
+  const { data, error } = await sb.from('meus_imoveis').select('*').order('atualizado_em', { ascending: false }).limit(1000);
+  if(error){ console.error(error); return; }
+  const todos = (data || []).map(mapearImovelDoBanco);
+  resultadosCache = todos.filter(im => !im.ignorado);
+  descartadosCache = todos.filter(im => im.ignorado);
+  renderResultados();
+  renderFavoritos();
+  renderDescartados();
+}
+
+function mapearImovelDoBanco(row){
+  return {
+    id: row.id,
+    numero_imovel: row.numero_formatado || row.numero_imovel,
+    empreendimento: row.empreendimento || '',
+    uf: row.uf, cidade: row.cidade, bairro: row.bairro || 'Bairro não informado',
+    endereco: row.endereco, valor_avaliacao: row.valor_avaliacao,
+    fatos: row.fatos || {},
+    modalidade: row.modalidade, preco: row.preco,
+    valor_1_leilao: row.valor_1_leilao, data_1_leilao: row.data_1_leilao,
+    valor_2_leilao: row.valor_2_leilao, data_2_leilao: row.data_2_leilao,
+    matricula: row.matricula, iptu: row.inscricao_imobiliaria,
+    comarca: row.comarca, edital: row.edital, leiloeiro: row.leiloeiro,
+    link: row.link, foto_url: row.foto_url,
+    filtros_correspondentes: row.filtros_correspondentes || [],
+    criado_em: row.primeira_vez_visto,
+    favorito: !!row.favorito,
+    ignorado: !!row.ignorado,
+  };
+}
+
+function montarSituacoes(im){
+  const temLeiloes = im.valor_1_leilao != null || im.valor_2_leilao != null;
+  if(temLeiloes){
+    const lista = [{ modalidade: im.modalidade || 'Situação atual', cabecalho: true }];
+    if(im.valor_1_leilao != null) lista.push({ modalidade: '1º Leilão', valor: im.valor_1_leilao, data: im.data_1_leilao });
+    if(im.valor_2_leilao != null) lista.push({ modalidade: '2º Leilão', valor: im.valor_2_leilao, data: im.data_2_leilao });
+    return lista;
+  }
+  return [{ modalidade: im.modalidade || 'Situação atual', valor: im.preco, data: null }];
+}
+
+function ehRecente(dataISO) {
+  if(!dataISO) return false;
+  const dias = (Date.now() - new Date(dataISO).getTime()) / 86400000;
+  return dias <= 2;
+}
+// aceita "100.000" (cem mil), "100.000,50" (cem mil e cinquenta centavos) ou
+// "100000" — ponto é sempre separador de milhar aqui, vírgula é decimal
+// (padrão brasileiro, ao contrário do <input type="number"> do navegador).
+function parseValorBR(str) {
+  if (!str) return null;
+  let s = String(str).trim().replace(/[^\d.,]/g, '');
+  if (!s) return null;
+  s = s.includes(',') ? s.replace(/\./g, '').replace(',', '.') : s.replace(/\./g, '');
+  const n = parseFloat(s);
+  return isNaN(n) ? null : n;
+}
+
+const SVG_ESTRELA = `<svg viewBox="0 0 24 24" fill="#fff"><path d="M12 2.5l2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.4 6.2 20.4l1.1-6.5-4.7-4.6 6.5-.9L12 2.5z"/></svg>`;
+const SVG_LIXEIRA = `<svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3m-8 0 1 13a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2l1-13"/></svg>`;
+
+function formatarValor(v) {
+  if (v === null || v === undefined) return '-';
+  return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+}
+function parseDataBr(str) {
+  if (!str) return null;
+  const m = str.match(/(\d{2})\/(\d{2})\/(\d{4})(?:[^\d]*(\d{1,2})[h:](\d{2}))?/);
+  if (!m) return null;
+  const [, d, mo, y, h, mi] = m;
+  return new Date(Number(y), Number(mo) - 1, Number(d), h ? Number(h) : 23, mi ? Number(mi) : 59);
+}
+function leilaoPassou(dataStr) {
+  const d = parseDataBr(dataStr);
+  return d ? d.getTime() < Date.now() : false;
+}
+function linkMapa(im) {
+  const partes = [im.empreendimento, im.endereco, im.bairro, `${im.cidade} - ${im.uf}`].filter(Boolean);
+  const q = encodeURIComponent(partes.join(', '));
+  return `https://www.google.com/maps/search/?api=1&query=${q}`;
+}
+
+// ---------------- filtros ----------------
+function renderFiltros() {
+  const container = document.getElementById('lista-filtros');
+  if (filtrosCache.length === 0) {
+    container.innerHTML = '<div class="vazio"><h3>Nenhum alerta cadastrado</h3><p>Crie um acima.</p></div>';
+    return;
+  }
+  container.innerHTML = filtrosCache.map(f => {
+    const bairros = (f.bairros && f.bairros.length) ? f.bairros.join(', ') : 'qualquer bairro';
+    const max = f.valor_max ? formatarValor(f.valor_max) : 'sem limite';
+    return `<div class="card filtro-item ${f.ativo ? '' : 'inativo'}">
+      <div class="filtro-info">
+        <b>${f.nome}</b>
+        <div class="meta">${f.cidade}/${f.estado} — ${bairros} — de ${formatarValor(f.valor_min || 0)} até ${max}</div>
+      </div>
+      <div class="filtro-acoes">
+        <button onclick="editarFiltro('${f.id}')">Editar</button>
+        <button onclick="alternarAtivo('${f.id}')">${f.ativo ? 'Pausar' : 'Ativar'}</button>
+        <button class="excluir" onclick="excluirFiltro('${f.id}')">Excluir</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+async function alternarAtivo(id) {
+  const f = filtrosCache.find(x => x.id === id);
+  if (!f) return;
+  const { error } = await sb.from('filtros').update({ ativo: !f.ativo }).eq('id', id);
+  if(error){ alert('Erro ao atualizar: ' + error.message); return; }
+  carregarFiltros();
+}
+async function excluirFiltro(id) {
+  const f = filtrosCache.find(x => x.id === id);
+  if(!f) return;
+  if(!confirm(`Excluir "${f.nome}"? Favoritos e itens marcados continuam salvos; o resto some sozinho na próxima busca.`)) return;
+
+  const { error } = await sb.from('filtros').delete().eq('id', id);
+  if(error){ alert('Erro ao excluir o alerta: ' + error.message); return; }
+
+  carregarFiltros();
+  carregarTudo();
+}
+let filtroEmEdicao = null;
+
+function editarFiltro(id) {
+  const f = filtrosCache.find(x => x.id === id);
+  if(!f) return;
+  filtroEmEdicao = id;
+  document.getElementById('f-nome').value = f.nome;
+  document.getElementById('f-estado').value = f.estado;
+  document.getElementById('f-cidade').value = f.cidade;
+  document.getElementById('f-bairros').value = (f.bairros || []).join(', ');
+  document.getElementById('f-valor-min').value = f.valor_min || '';
+  document.getElementById('f-valor-max').value = f.valor_max != null ? f.valor_max : '';
+  document.getElementById('btn-salvar-filtro').textContent = 'Salvar alterações';
+  document.getElementById('btn-cancelar-edicao').style.display = 'inline-block';
+  document.getElementById('form-filtro').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function cancelarEdicaoFiltro() {
+  filtroEmEdicao = null;
+  document.getElementById('form-filtro').reset();
+  document.getElementById('btn-salvar-filtro').textContent = 'Adicionar alerta';
+  document.getElementById('btn-cancelar-edicao').style.display = 'none';
+}
+
+document.getElementById('form-filtro').addEventListener('submit', async e => {
+  e.preventDefault();
+  const bairros = document.getElementById('f-bairros').value.split(',').map(b => b.trim()).filter(Boolean);
+  const payload = {
+    nome: document.getElementById('f-nome').value.trim() || 'Novo alerta',
+    estado: document.getElementById('f-estado').value || 'BA',
+    cidade: document.getElementById('f-cidade').value.trim() || 'Salvador',
+    bairros,
+    valor_min: parseValorBR(document.getElementById('f-valor-min').value) || 0,
+    valor_max: parseValorBR(document.getElementById('f-valor-max').value),
+  };
+  let error;
+  if(filtroEmEdicao){
+    ({ error } = await sb.from('filtros').update(payload).eq('id', filtroEmEdicao));
+  } else {
+    ({ error } = await sb.from('filtros').insert({ ...payload, ativo: true }));
+  }
+  if(error){ alert('Erro ao salvar: ' + error.message); return; }
+  cancelarEdicaoFiltro();
+  carregarFiltros();
+});
+function preencherSelectOrigem() {
+  const select = document.getElementById('filtro-origem');
+  const atual = select.value;
+  const nomes = [...new Set(filtrosCache.map(f => f.nome))];
+  select.innerHTML = '<option value="">Todos os filtros</option>' + nomes.map(n => `<option value="${n}">${n}</option>`).join('');
+  select.value = atual;
+}
+
+// ---------------- cards (resultados / favoritos) ----------------
+function chipsFatos(f) {
+  if (!f) return '';
+  const itens = [];
+  if (f.tipo) itens.push(f.tipo);
+  if (f.quartos) itens.push(f.quartos + (f.quartos === 1 ? ' quarto' : ' quartos'));
+  if (f.banheiros) itens.push(f.banheiros + (f.banheiros === 1 ? ' banheiro' : ' banheiros'));
+  if (f.vagas) itens.push(f.vagas + (f.vagas === 1 ? ' vaga' : ' vagas'));
+  if (f.area_privativa) itens.push(Math.round(f.area_privativa) + ' m² privativos');
+  (f.amenidades || []).forEach(a => itens.push(a));
+  return itens.map(t => `<span class="chip">${t}</span>`).join('');
+}
+function situacoesHtml(situacoes) {
+  if (!situacoes || situacoes.length === 0) return '';
+  return `<div class="situacoes">${situacoes.map(s => {
+    if (s.cabecalho) return `<div class="situacao-cabecalho">${s.modalidade}</div>`;
+    const passou = leilaoPassou(s.data);
+    return `<div class="situacao-item${passou ? ' passado' : ''}">
+      <span>${s.modalidade}${s.data ? `: ${s.data}` : ''}</span>
+      <span class="situacao-valor">${formatarValor(s.valor)}</span>
+    </div>`;
+  }).join('')}</div>`;
+}
+function cardHtml(im) {
+  const badgesFiltro = (im.filtros_correspondentes || []).map(n => `<span class="badge">${n}</span>`).join('');
+  const badgeNovo = ehRecente(im.criado_em) ? '<span class="badge novo">Novo</span>' : '';
+  const extras = [
+    ['Matrícula', im.matricula], ['IPTU', im.iptu], ['Comarca', im.comarca],
+    ['Edital', im.edital], ['Leiloeiro(a)', im.leiloeiro],
+  ].filter(([, v]) => v).map(([r, v]) => `<div class="linha-extra"><span>${r}</span><span>${v}</span></div>`).join('');
+  return `<div class="card imovel">
+    <div class="imovel-topo">
+      <div>
+        ${badgesFiltro ? `<div class="badges-filtro">${badgesFiltro}</div>` : ''}
+        <div class="imovel-numero">Imóvel nº ${im.numero_imovel}</div>
+        <div class="imovel-local">${im.bairro} — ${im.cidade}/${im.uf} ${badgeNovo}</div>
+        <div class="imovel-endereco">${im.empreendimento ? `${im.empreendimento} — ` : ''}${im.endereco}
+          <a class="link-maps" href="${linkMapa(im)}" target="_blank" rel="noopener">📍 Street View</a>
+        </div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;">
+        <div class="icones-topo">
+          <button class="btn-icone favorito ${im.favorito ? 'ativo' : ''}" title="${im.favorito ? 'Remover dos favoritos' : 'Favoritar'}" onclick="toggleFavorito('${im.id}')">${SVG_ESTRELA}</button>
+          <button class="btn-icone descartar" title="Não tenho interesse" onclick="ignorarImovel('${im.id}')">${SVG_LIXEIRA}</button>
+        </div>
+        <div class="imovel-valor">
+          <span>${formatarValor(im.valor_avaliacao)}</span>
+          <span class="rotulo-valor">Avaliação</span>
+        </div>
+      </div>
+    </div>
+    <div>${chipsFatos(im.fatos)}</div>
+    ${situacoesHtml(montarSituacoes(im))}
+    ${extras ? `<div class="extras">${extras}</div>` : ''}
+    <div class="imovel-rodape">
+      <span></span>
+      <a href="${im.link}" target="_blank" rel="noopener">Ver imóvel no site da Caixa →</a>
+    </div>
+  </div>`;
+}
+async function toggleFavorito(id) {
+  const im = resultadosCache.find(x => x.id === id);
+  if (!im) return;
+  im.favorito = !im.favorito;
+  renderResultados();
+  renderFavoritos();
+  const { error } = await sb.from('interesse_usuario')
+    .upsert({ imovel_id: id, favorito: im.favorito }, { onConflict: 'user_id,imovel_id' });
+  if(error){
+    im.favorito = !im.favorito; // desfaz se a gravação falhar
+    renderResultados();
+    renderFavoritos();
+    alert('Não foi possível salvar o favorito: ' + error.message);
+  }
+}
+
+async function ignorarImovel(id) {
+  if(!confirm('Não mostrar mais este imóvel? Ele vai pra aba Descartados — dá pra restaurar de lá quando quiser.')) return;
+  const { error } = await sb.from('interesse_usuario')
+    .upsert({ imovel_id: id, ignorado: true }, { onConflict: 'user_id,imovel_id' });
+  if(error){ alert('Não foi possível descartar: ' + error.message); return; }
+  carregarTudo();
+}
+
+async function restaurarImovel(id) {
+  const { error } = await sb.from('interesse_usuario')
+    .upsert({ imovel_id: id, ignorado: false }, { onConflict: 'user_id,imovel_id' });
+  if(error){ alert('Não foi possível restaurar: ' + error.message); return; }
+  carregarTudo();
+}
+
+// ---------------- resultados (busca, filtro-origem, bairro, ordenar, agrupar) ----------------
+let bairrosSelecionados = new Set();
+function atualizarPainelBairros(disponiveis) {
+  const lista = document.getElementById('bairro-filtro-lista');
+  const nomes = [...disponiveis.keys()].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  bairrosSelecionados = new Set([...bairrosSelecionados].filter(b => disponiveis.has(b)));
+  lista.innerHTML = nomes.map(b => `<label class="bairro-filtro-item">
+    <input type="checkbox" value="${b}" ${bairrosSelecionados.has(b) ? 'checked' : ''} onchange="alternarBairroSelecionado('${b.replace(/'/g, "\\'")}', this.checked)">
+    <span class="nome-bairro">${b}</span> <span class="contagem">${disponiveis.get(b)}</span>
+  </label>`).join('');
+  document.getElementById('bairro-filtro-resumo').textContent =
+    bairrosSelecionados.size === 0 ? 'Todos os bairros' : `${bairrosSelecionados.size} bairro(s) selecionado(s)`;
+}
+function alternarBairroSelecionado(bairro, marcado) {
+  if (marcado) bairrosSelecionados.add(bairro); else bairrosSelecionados.delete(bairro);
+  renderResultados();
+}
+function limparSelecaoBairros() { bairrosSelecionados.clear(); renderResultados(); }
+
+function agruparERenderizar(lista, destinoId) {
+  const destino = document.getElementById(destinoId);
+  if (lista.length === 0) {
+    destino.innerHTML = '<div class="vazio"><h3>Nada por aqui ainda</h3><p>Assim que a busca encontrar algo, aparece nesta lista.</p></div>';
+    return;
+  }
+  const grupos = new Map();
+  lista.forEach(im => {
+    if (!grupos.has(im.bairro)) grupos.set(im.bairro, []);
+    grupos.get(im.bairro).push(im);
+  });
+  const bairrosOrdenados = [...grupos.keys()].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  destino.innerHTML = bairrosOrdenados.map(bairro => {
+    const itens = [...grupos.get(bairro)].sort((a, b) => (a.valor_avaliacao || 0) - (b.valor_avaliacao || 0));
+    return `<div class="grupo-bairro">
+      <div class="grupo-bairro-titulo">${bairro} <span class="n">${itens.length}</span></div>
+      ${itens.map(cardHtml).join('')}
+    </div>`;
+  }).join('');
+}
+
+function renderResultados() {
+  const busca = document.getElementById('busca').value.trim().toLowerCase();
+  const origem = document.getElementById('filtro-origem').value;
+  const ordenar = document.getElementById('ordenar').value;
+
+  let base = resultadosCache.filter(im => {
+    if (origem && !(im.filtros_correspondentes || []).includes(origem)) return false;
+    if (busca) {
+      const alvo = [im.endereco, im.bairro, im.cidade].join(' ').toLowerCase();
+      if (!alvo.includes(busca)) return false;
+    }
+    return true;
+  });
+
+  const contagemBairros = new Map();
+  base.forEach(im => contagemBairros.set(im.bairro, (contagemBairros.get(im.bairro) || 0) + 1));
+  atualizarPainelBairros(contagemBairros);
+
+  let lista = bairrosSelecionados.size === 0 ? base : base.filter(im => bairrosSelecionados.has(im.bairro));
+
+  document.getElementById('contagem').textContent = lista.length + (lista.length === 1 ? ' imóvel encontrado' : ' imóveis encontrados');
+
+  if (ordenar === 'valor-asc' || ordenar === 'valor-desc') {
+    const ordenados = [...lista].sort((a, b) => ordenar === 'valor-asc' ? (a.valor_avaliacao || 0) - (b.valor_avaliacao || 0) : (b.valor_avaliacao || 0) - (a.valor_avaliacao || 0));
+    document.getElementById('grid-resultados').innerHTML = ordenados.length ? ordenados.map(cardHtml).join('') : '<div class="vazio"><h3>Nada por aqui ainda</h3></div>';
+    return;
+  }
+  agruparERenderizar(lista, 'grid-resultados');
+}
+
+function renderFavoritos() {
+  const lista = resultadosCache.filter(im => im.favorito);
+  document.getElementById('contagem-favoritos').textContent = lista.length + (lista.length === 1 ? ' imóvel favoritado' : ' imóveis favoritados');
+  agruparERenderizar(lista, 'grid-favoritos');
+}
+
+function renderDescartados() {
+  document.getElementById('contagem-descartados').textContent =
+    descartadosCache.length + (descartadosCache.length === 1 ? ' imóvel descartado' : ' imóveis descartados');
+  const destino = document.getElementById('lista-descartados');
+  if (descartadosCache.length === 0) {
+    destino.innerHTML = '<div class="vazio"><h3>Nenhum imóvel descartado</h3><p>Os que você marcar como "sem interesse" aparecem aqui.</p></div>';
+    return;
+  }
+  destino.innerHTML = descartadosCache.map(im => `
+    <div class="item-descartado">
+      <div class="item-descartado-info">
+        <div class="item-descartado-local">${im.bairro} — ${im.cidade}/${im.uf}</div>
+        <div class="item-descartado-endereco">${im.empreendimento ? `${im.empreendimento} — ` : ''}${im.endereco}</div>
+      </div>
+      <div class="item-descartado-acoes">
+        <span class="item-descartado-valor">${formatarValor(im.valor_avaliacao)}</span>
+        <a href="${im.link}" target="_blank" rel="noopener">Ver no site da Caixa →</a>
+        <button class="btn-restaurar" onclick="restaurarImovel('${im.id}')">Restaurar</button>
+      </div>
+    </div>`).join('');
+}
+
+// ---------------- abas ----------------
+document.querySelectorAll('nav.tabs button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('nav.tabs button').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('section.view').forEach(v => v.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('view-' + btn.dataset.tab).classList.add('active');
+  });
+});
+
+document.getElementById('busca').addEventListener('input', renderResultados);
+document.getElementById('filtro-origem').addEventListener('change', renderResultados);
+document.getElementById('ordenar').addEventListener('change', renderResultados);
+</script>
+</body>
+</html>
