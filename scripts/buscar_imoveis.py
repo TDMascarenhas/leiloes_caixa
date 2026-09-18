@@ -242,6 +242,21 @@ def html_para_texto(pagina_html: str) -> str:
     return texto
 
 
+def extrair_titulo_empreendimento(html_bruto: str) -> str | None:
+    """No único exemplo real que consegui confirmar, o nome do empreendimento
+    aparece como um título (heading) no topo da página, sem rótulo nenhum,
+    logo antes de 'Valor de avaliação'. Pega o heading mais próximo dali."""
+    pos_valor = html_bruto.lower().find("valor de avalia")
+    if pos_valor == -1:
+        return None
+    trecho = html_bruto[:pos_valor]
+    matches = list(re.finditer(r"<h[1-6][^>]*>\s*([^<]{2,80}?)\s*</h[1-6]>", trecho, re.I))
+    if not matches:
+        return None
+    nome = re.sub(r"\s+", " ", matches[-1].group(1)).strip()
+    return nome or None
+
+
 def buscar_detalhe(numero_imovel: str) -> dict:
     """Busca a página individual do imóvel e tenta extrair 1º/2º leilão, matrícula,
     comarca, edital, leiloeiro e foto. Best-effort: campo que não achar fica None."""
@@ -283,7 +298,7 @@ def buscar_detalhe(numero_imovel: str) -> dict:
         "empreendimento": buscar_qualquer([
             r"Empreendimento[:\s]*([^\n]{1,80}?)\s+(?:Tipo de im[óo]vel|Quartos|Matr[íi]cula|Comarca|Valor de avalia|$)",
             r"Nome do empreendimento[:\s]*([^\n]{1,80}?)\s+(?:Tipo de im[óo]vel|Quartos|Matr[íi]cula|Comarca|Valor de avalia|$)",
-        ]),
+        ]) or extrair_titulo_empreendimento(resp.text),
         "valor_1_leilao": parse_decimal(buscar_qualquer([
             r"Data do 1[ºo] Leil[ãa]o[^R]{0,60}R\$\s*([\d.,]+)",
             r"1[ºo]\s*Leil[ãa]o[^R]{0,40}R\$\s*([\d.,]+)",
