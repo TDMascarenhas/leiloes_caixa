@@ -5,7 +5,7 @@ on:
     # Horários em Brasília (UTC-3) — GitHub Actions usa UTC, por isso a diferença:
     - cron: "0 13 * * *"   # 10:00 em Brasília
     - cron: "0 18 * * *"   # 15:00 em Brasília
-    - cron: "0 23 * * *"   # 20:00 em Brasília
+    - cron: "0 23 * * *"   # 20:00 em Brasília (é nesta que saem os lembretes de véspera)
   workflow_dispatch: {}  # permite rodar manualmente pela aba "Actions" no GitHub
 
 jobs:
@@ -27,4 +27,23 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
+          PAINEL_URL: ${{ vars.PAINEL_URL }}
         run: python scripts/buscar_imoveis.py
+
+      # Rede de segurança: se algo quebrou antes do próprio robô conseguir
+      # avisar (ex.: falha ao instalar dependências, segredo faltando), manda
+      # um aviso simples pro administrador. Se o robô já avisou, não repete.
+      - name: Avisar administrador sobre falha
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
+          LINK: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -f "$RUNNER_TEMP/radar_alerta_enviado" ]; then exit 0; fi
+          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_ADMIN_CHAT_ID" ]; then exit 0; fi
+          curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            --data-urlencode "chat_id=${TELEGRAM_ADMIN_CHAT_ID}" \
+            --data-urlencode "text=❌ Busca falhou antes de começar (erro no workflow do GitHub). Veja: ${LINK}" > /dev/null
