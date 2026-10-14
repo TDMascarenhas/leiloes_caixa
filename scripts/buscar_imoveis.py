@@ -8,12 +8,17 @@ mudou de situação, e grava tudo no Supabase (tabelas `imoveis` e
 `historico`). O painel web (painel/index.html) lê esses dados direto do
 Supabase — este script não gera nenhuma página.
 
-Ainda não manda nada pro Telegram — isso entra numa etapa seguinte.
+Avisa no Telegram: imóveis novos, mudanças de praça/preço, lembretes na
+véspera do leilão (com destaque pros favoritos) e, pro administrador,
+problemas na própria busca.
 
 Variáveis de ambiente esperadas (Secrets do GitHub Actions):
     SUPABASE_URL           ex: https://xxxxx.supabase.co
     SUPABASE_SERVICE_KEY   chave service_role (nunca a anon — precisa
                             ignorar RLS pra gravar em `imoveis`/`historico`)
+    TELEGRAM_BOT_TOKEN     opcional — sem ele, não manda aviso nenhum
+    TELEGRAM_ADMIN_CHAT_ID opcional — chat que recebe os avisos de problema
+    PAINEL_URL             opcional — link do painel usado nos botões
 
 Uso:
     python buscar_imoveis.py
@@ -31,7 +36,7 @@ import re
 import sys
 import time
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -134,6 +139,7 @@ def parse_properties(text: str, uf: str) -> list[dict]:
         "descricao": col_index(headers, lambda h: "descricao" in h),
         "modalidade": col_index(headers, lambda h: "modalidade" in h),
         "link": col_index(headers, lambda h: "link" in h),
+        "financiamento": col_index(headers, lambda h: h == "financiamento"),
     }
     if idx["numero"] < 0 or idx["cidade"] < 0:
         raise RuntimeError(f"{uf}: estrutura do CSV mudou, colunas encontradas: {headers}")
@@ -157,6 +163,8 @@ def parse_properties(text: str, uf: str) -> list[dict]:
             "desconto": get(row, idx["desconto"]),
             "descricao": get(row, idx["descricao"]),
             "modalidade": get(row, idx["modalidade"]),
+            "financiamento": (normalize(get(row, idx["financiamento"])).startswith("s")
+                              if idx["financiamento"] >= 0 and get(row, idx["financiamento"]) else None),
             "link": get(row, idx["link"]) or (
                 f"https://venda-imoveis.caixa.gov.br/sistema/detalhe-imovel.asp"
                 f"?hdnOrigem=index&hdnimovel={re.sub(r'[^0-9]', '', numero)}"
@@ -353,6 +361,10 @@ for _sufixo in ("/rest/v1", "/rest"):
     if SUPABASE_URL.endswith(_sufixo):
         SUPABASE_URL = SUPABASE_URL[: -len(_sufixo)]
 SUPABASE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")  # opcional — sem isso, só não avisa
+TELEGRAM_ADMIN_CHAT_ID = os.environ.get("TELEGRAM_ADMIN_CHAT_ID")  # opcional — avisos de problema
+PAINEL_URL = (os.environ.get("PAINEL_URL") or "https://tdmascarenhas.github.io/leiloes_caixa/painel/").strip()
+FUSO_BRASILIA = timezone(timedelta(hours=-3))
 HEADERS_SB = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
@@ -372,6 +384,7 @@ def carregar_filtros_ativos() -> list[dict]:
     for f in resp.json():
         filtros.append({
             "id": f["id"],
+            "user_id": f["user_id"],
             "nome": f["nome"],
             "estado": f["estado"].upper(),
             "cidade": f["cidade"],
@@ -469,16 +482,234 @@ def registrar_historico(lote: list[dict]) -> None:
         resp.raise_for_status()
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Radar de Leilões Caixa — roda no GitHub Actions, grava no Supabase.")
-    parser.add_argument("--sem-detalhes", action="store_true",
-                         help="pula a busca da página individual de cada imóvel (mais rápido, menos dados)")
-    args = parser.parse_args()
+def _get_json(tabela: str, params: dict) -> list[dict]:
+    resp = requests.get(f"{SUPABASE_URL}/rest/v1/{tabela}", headers=HEADERS_SB, params=params, timeout=60)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def carregar_perfis() -> dict[str, dict]:
+    """user_id -> preferências, só de quem conectou o Telegram."""
+    perfis = {}
+    for row in _get_json("perfil_usuario", {"telegram_chat_id": "not.is.null", "select": "*"}):
+        if not row.get("telegram_chat_id"):
+            continue
+        perfis[row["user_id"]] = {
+            "chat_id": row["telegram_chat_id"],
+            "avisar_novo": row.get("avisar_novo", True) is not False,
+            "avisar_mudanca": row.get("avisar_mudanca", True) is not False,
+            "lembrete_vespera": row.get("lembrete_vespera") or "favoritos",
+        }
+    return perfis
+
+
+def carregar_interesses(user_ids: list[str]) -> dict[str, dict[str, dict]]:
+    """user_id -> {imovel_id: linha de interesse_usuario}."""
+    if not user_ids:
+        return {}
+    linhas = _get_json("interesse_usuario", {
+        "user_id": f"in.({','.join(user_ids)})",
+        "select": "user_id,imovel_id,favorito,ignorado,removido,removido_preco,removido_modalidade",
+    })
+    out: dict[str, dict[str, dict]] = {}
+    for row in linhas:
+        out.setdefault(row["user_id"], {})[row["imovel_id"]] = row
+    return out
+
+
+def silenciado(interesse: dict | None, im: dict) -> bool:
+    """Sem interesse nunca avisa; removido da lista só volta a avisar se o
+    preço ou a modalidade mudaram desde a remoção. Favorito sempre avisa."""
+    if not interesse:
+        return False
+    if interesse.get("favorito"):
+        return False
+    if interesse.get("ignorado"):
+        return True
+    if interesse.get("removido"):
+        mesmo_preco = round(float(interesse.get("removido_preco") or 0), 2) == round(float(im.get("preco") or 0), 2)
+        mesma_mod = (interesse.get("removido_modalidade") or "") == (im.get("modalidade") or "")
+        return mesmo_preco and mesma_mod
+    return False
+
+
+def formatar_valor_telegram(v) -> str:
+    if v is None:
+        return "-"
+    return f"R$ {float(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _esc(txt) -> str:
+    return html_module.escape(str(txt or ""), quote=False)
+
+
+def ler_data_leilao(txt: str | None):
+    """'17/10/2026 - 10h00' -> (date, '10h') ou (None, None)."""
+    m = re.search(r"(\d{2})/(\d{2})/(\d{4})(?:\D+(\d{1,2})[h:](\d{2}))?", txt or "")
+    if not m:
+        return None, None
+    try:
+        d = datetime(int(m.group(3)), int(m.group(2)), int(m.group(1))).date()
+    except ValueError:
+        return None, None
+    hora = None
+    if m.group(4):
+        hora = f"{int(m.group(4))}h" + ("" if m.group(5) == "00" else m.group(5))
+    return d, hora
+
+
+DIAS_SEMANA = ["seg", "ter", "qua", "qui", "sex", "sáb", "dom"]
+
+
+def _data_curta(txt: str | None) -> str:
+    d, hora = ler_data_leilao(txt)
+    if not d:
+        return _esc(txt)
+    base = f"{DIAS_SEMANA[d.weekday()]} {d.strftime('%d/%m')}"
+    return f"{base} às {hora}" if hora else base
+
+
+def montar_mensagem(im: dict, motivo: str, favorito: bool, imovel_id: str | None,
+                    linha_extra: str | None = None, mostrar_pracas: bool = True) -> tuple[str, list[tuple[str, str]]]:
+    linhas = []
+    if favorito:
+        linhas.append("⭐ <b>Seu favorito</b>")
+    linhas.append(f"<b>{_esc(motivo)}</b>")
+    linhas.append(f"<b>{_esc(im.get('bairro') or 'Bairro não informado')}, {_esc(im.get('cidade'))} ({_esc(im.get('uf'))})</b>")
+    endereco = im.get("endereco") or ""
+    if im.get("empreendimento"):
+        endereco = f"{im['empreendimento']}, {endereco}"
+    if endereco:
+        linhas.append(_esc(endereco))
+    if linha_extra:
+        linhas.append(linha_extra)
+
+    hoje = datetime.now(FUSO_BRASILIA).date()
+    pracas = []
+    for n in (1, 2):
+        valor = im.get(f"valor_{n}_leilao")
+        if valor is None:
+            continue
+        d, _ = ler_data_leilao(im.get(f"data_{n}_leilao"))
+        texto = f"{n}º leilão, {_data_curta(im.get(f'data_{n}_leilao'))}: {formatar_valor_telegram(valor)}"
+        pracas.append(f"<s>{texto}</s>" if d and d < hoje else texto)
+    if pracas:
+        if mostrar_pracas:
+            linhas.extend(pracas)
+    else:
+        linhas.append(f"{_esc(im.get('modalidade') or 'Venda')}: <b>{formatar_valor_telegram(im.get('preco'))}</b>")
+    linhas.append(f"Avaliação: {formatar_valor_telegram(im.get('valor_avaliacao'))}")
+
+    botoes = []
+    if imovel_id:
+        botoes.append(("Ver no Radar", f"{PAINEL_URL}#imovel={imovel_id}"))
+    if im.get("link"):
+        botoes.append(("Abrir na Caixa", im["link"]))
+    return "\n".join(linhas), botoes
+
+
+def enviar_telegram(chat_id: str, texto: str, botoes: list[tuple[str, str]] | None = None) -> bool:
+    if not TELEGRAM_BOT_TOKEN:
+        return False
+    corpo = {"chat_id": chat_id, "text": texto, "parse_mode": "HTML", "disable_web_page_preview": True}
+    if botoes:
+        corpo["reply_markup"] = {"inline_keyboard": [[{"text": t, "url": u} for t, u in botoes]]}
+    try:
+        resp = requests.post(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage", json=corpo, timeout=30)
+        if not resp.ok:
+            print(f"    aviso: Telegram recusou a mensagem pra {chat_id} ({resp.status_code}): {resp.text[:200]}", file=sys.stderr)
+        return resp.ok
+    except Exception as exc:  # noqa: BLE001
+        print(f"    aviso: falha ao enviar Telegram pra {chat_id}: {exc}", file=sys.stderr)
+        return False
+
+
+def vincular_chat_id_telegram(user_id: str, chat_id: str) -> None:
+    """Grava direto via service_role — aqui não tem auth.uid() de sessão
+    (é o robô rodando, não uma pessoa logada), então manda o user_id
+    explicitamente no payload."""
+    resp = requests.post(
+        f"{SUPABASE_URL}/rest/v1/perfil_usuario",
+        headers={**HEADERS_SB, "Prefer": "resolution=merge-duplicates,return=minimal"},
+        params={"on_conflict": "user_id"},
+        json={"user_id": user_id, "telegram_chat_id": str(chat_id)},
+        timeout=30,
+    )
+    if not resp.ok:
+        print(f"    aviso: falha ao vincular chat_id do usuário {user_id}: {resp.status_code} {resp.text}", file=sys.stderr)
+
+
+def processar_vinculos_telegram() -> None:
+    """Lê as mensagens pendentes do bot (via getUpdates), acha quem mandou
+    '/start <user_id>' pelo link/QR Code do painel, e vincula o chat_id
+    daquela pessoa à conta dela — sem precisar de servidor rodando o
+    tempo todo, só aproveitando as execuções agendadas do robô."""
+    if not TELEGRAM_BOT_TOKEN:
+        return
+    try:
+        resp = requests.get(
+            f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates",
+            params={"timeout": 0},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        dados = resp.json()
+    except Exception as exc:  # noqa: BLE001
+        print(f"aviso: não consegui checar mensagens do Telegram: {exc}", file=sys.stderr)
+        return
+
+    resultados = dados.get("result", [])
+    if not resultados:
+        return
+
+    maior_update_id = None
+    vinculados = 0
+    for atualizacao in resultados:
+        maior_update_id = atualizacao["update_id"]
+        msg = atualizacao.get("message") or {}
+        texto = (msg.get("text") or "").strip()
+        chat_id = msg.get("chat", {}).get("id")
+        if not chat_id or not texto.startswith("/start"):
+            continue
+        partes = texto.split(maxsplit=1)
+        if len(partes) < 2:
+            continue
+        user_id = partes[1].strip()
+        vincular_chat_id_telegram(user_id, chat_id)
+        vinculados += 1
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                json={"chat_id": chat_id, "text": "✅ Pronto! A partir de agora você recebe aqui os avisos de imóvel do Radar de Leilões Caixa."},
+                timeout=15,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    if vinculados:
+        print(f"Telegram: {vinculados} conta(s) vinculada(s) via /start.")
+
+    # confirma o recebimento pro Telegram parar de reenviar essas mensagens
+    if maior_update_id is not None:
+        try:
+            requests.get(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates",
+                params={"offset": maior_update_id + 1, "timeout": 0},
+                timeout=30,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def executar(args, problemas: list[tuple[str, str]]) -> dict:
+    """A busca em si. Problemas que não derrubam a execução vão pra lista
+    `problemas` como (chave, texto) e viram aviso pro administrador."""
+    processar_vinculos_telegram()
 
     filtros = carregar_filtros_ativos()
     if not filtros:
         print("Nenhum filtro ativo cadastrado no Supabase. Nada a fazer.")
-        return 0
+        return {"novos": 0, "mudados": 0, "ufs": []}
 
     print(f"{len(filtros)} filtro(s) ativo(s):")
     for f in filtros:
@@ -493,9 +724,12 @@ def main() -> int:
             texto_csv = download_uf(uf)
             imoveis_por_uf[uf] = parse_properties(texto_csv, uf)
             print(f"[{uf}] {len(imoveis_por_uf[uf])} imóveis no CSV oficial.")
+            if not imoveis_por_uf[uf]:
+                problemas.append((f"{uf}:vazio", f"{uf}: a lista da Caixa veio vazia (0 imóveis)."))
         except Exception as exc:  # noqa: BLE001
             print(f"[{uf}] ERRO ao baixar/processar: {exc}", file=sys.stderr)
             imoveis_por_uf[uf] = []
+            problemas.append((f"{uf}:download", f"{uf}: não consegui baixar ou ler a lista da Caixa ({str(exc)[:160]})."))
 
     # casa cada imóvel contra cada filtro; um mesmo imóvel pode bater em mais de um
     resultados_por_chave: dict[str, dict] = {}
@@ -522,6 +756,7 @@ def main() -> int:
         chave = f"{im['uf']}:{im['numero_imovel']}"
         anterior = estado_anterior.get(chave)
         im["_eh_novo"] = anterior is None
+        im["_preco_anterior"] = anterior.get("preco") if anterior else None
         im["_mudou"] = anterior is not None and (
             (anterior.get("modalidade") or "") != (im.get("modalidade") or "")
             or round(float(anterior.get("preco") or 0), 2) != round(float(im.get("preco") or 0), 2)
@@ -538,14 +773,19 @@ def main() -> int:
     if not args.sem_detalhes and alvo_detalhe:
         print(f"Buscando detalhe individual de {len(alvo_detalhe)} imóveis novos ou com modalidade/preço "
               f"diferentes de antes (os que não mudaram reaproveitam o que já tínhamos)...")
+        erros_detalhe = 0
         for i, im in enumerate(alvo_detalhe, start=1):
             print(f"  [{i}/{len(alvo_detalhe)}] imóvel nº {im['numero_imovel']}...")
             detalhe = buscar_detalhe(im["numero_imovel"])
             if detalhe.get("_erro_detalhe"):
+                erros_detalhe += 1
                 print(f"    aviso: não consegui buscar o detalhe ({detalhe['_erro_detalhe']})")
             else:
                 im.update(detalhe)
             time.sleep(0.6)  # educado com o servidor da Caixa
+        if erros_detalhe >= 3 and erros_detalhe > len(alvo_detalhe) * 0.25:
+            problemas.append(("detalhe", f"{erros_detalhe} de {len(alvo_detalhe)} páginas de detalhe não abriram. "
+                                         "Esses imóveis ficaram sem data de leilão por enquanto."))
     elif not alvo_detalhe:
         print("Nada novo ou alterado desde a última execução — não precisei buscar nenhuma página de detalhe agora.")
 
@@ -566,6 +806,7 @@ def main() -> int:
             "preco": im.get("preco"),
             "desconto": im.get("desconto"),
             "modalidade": im.get("modalidade"),
+            "financiamento": im.get("financiamento"),
             "descricao": im.get("descricao"),
             "fatos": im.get("fatos"),
             "link": im.get("link"),
@@ -615,8 +856,216 @@ def main() -> int:
             inserir_associacoes_filtro(pares[i:i + 200])
         total_associacoes += len(pares)
 
+    # Telegram: avisos por usuário, só do que bate nos filtros DELE, respeitando
+    # as preferências e o que ele marcou como sem interesse / removido
+    if TELEGRAM_BOT_TOKEN:
+        try:
+            enviar_avisos_e_lembretes(filtros, chaves_por_filtro, resultados_por_chave, ids_por_chave)
+        except Exception as exc:  # noqa: BLE001
+            print(f"aviso: falha ao enviar avisos no Telegram: {exc}", file=sys.stderr)
+            problemas.append(("telegram", f"Falha ao enviar avisos de imóveis no Telegram ({str(exc)[:160]})."))
+    else:
+        print("Telegram não configurado (secret TELEGRAM_BOT_TOKEN ausente) — pulei os avisos.")
+
     print(f"Concluído. {novos} imóvel(is) novo(s), {mudados} com situação alterada, "
           f"{total_associacoes} associação(ões) filtro-imóvel atualizadas.")
+    return {"novos": novos, "mudados": mudados, "ufs": ufs}
+
+
+def _buscar_imoveis_por_id(ids: list[str]) -> dict[str, dict]:
+    out = {}
+    ids = list(ids)
+    for i in range(0, len(ids), 80):
+        for row in _get_json("imoveis", {"id": f"in.({','.join(ids[i:i + 80])})", "select": "*"}):
+            out[row["id"]] = row
+    return out
+
+
+def enviar_avisos_e_lembretes(filtros, chaves_por_filtro, resultados_por_chave, ids_por_chave) -> None:
+    perfis = carregar_perfis()
+    if not perfis:
+        print("Telegram: ninguém conectado ainda — nenhum aviso a enviar.")
+        return
+    interesses = carregar_interesses(list(perfis.keys()))
+
+    # quais imóveis (id) cada usuário tem pelos filtros ATIVOS, e por qual filtro
+    por_usuario: dict[str, dict[str, dict]] = {}
+    for f in filtros:
+        if f["user_id"] not in perfis:
+            continue
+        for chave in chaves_por_filtro.get(f["id"], []):
+            imovel_id = ids_por_chave.get(chave)
+            im = resultados_por_chave.get(chave)
+            if not imovel_id or not im:
+                continue
+            por_usuario.setdefault(f["user_id"], {})[imovel_id] = im
+
+    # 1) imóvel novo / mudança de praça ou preço
+    total = 0
+    for user_id, itens in por_usuario.items():
+        perfil = perfis[user_id]
+        inter = interesses.get(user_id, {})
+        fila = []
+        for imovel_id, im in itens.items():
+            if silenciado(inter.get(imovel_id), im):
+                continue
+            fav = bool(inter.get(imovel_id, {}).get("favorito"))
+            if im.get("_eh_novo") and perfil["avisar_novo"]:
+                fila.append((fav, montar_mensagem(im, "Imóvel novo", fav, imovel_id)))
+            elif im.get("_mudou") and perfil["avisar_mudanca"]:
+                extra = None
+                if im.get("_preco_anterior") is not None and im.get("preco") is not None:
+                    extra = (f"De <s>{formatar_valor_telegram(im['_preco_anterior'])}</s> para "
+                             f"<b>{formatar_valor_telegram(im['preco'])}</b>.")
+                fila.append((fav, montar_mensagem(im, "Mudou de praça ou de preço", fav, imovel_id, extra)))
+        fila.sort(key=lambda x: not x[0])  # favoritos primeiro
+        for _, (texto, botoes) in fila:
+            if enviar_telegram(perfil["chat_id"], texto, botoes):
+                total += 1
+            time.sleep(1)
+    print(f"Telegram: {total} aviso(s) de imóvel enviado(s).")
+
+    # 2) lembrete na véspera — só na busca da noite (18h em diante, horário de Brasília)
+    agora_local = datetime.now(FUSO_BRASILIA)
+    if agora_local.hour < 18:
+        return
+    amanha = agora_local.date() + timedelta(days=1)
+    amanha_txt = amanha.strftime("%d/%m/%Y")
+
+    candidatos: dict[str, set[str]] = {}
+    for user_id, perfil in perfis.items():
+        modo = perfil["lembrete_vespera"]
+        if modo == "nao":
+            continue
+        inter = interesses.get(user_id, {})
+        ids = {i for i, r in inter.items() if r.get("favorito")}
+        if modo == "todos":
+            ids |= set(por_usuario.get(user_id, {}).keys())
+        if ids:
+            candidatos[user_id] = ids
+    if not candidatos:
+        return
+    todos_ids = set().union(*candidatos.values())
+    imoveis = _buscar_imoveis_por_id(sorted(todos_ids))
+    ja_enviados = {(r["user_id"], r["imovel_id"]) for r in _get_json("lembrete_enviado", {
+        "data_leilao": f"eq.{amanha_txt}", "select": "user_id,imovel_id"})}
+
+    lembretes = 0
+    registros = []
+    for user_id, ids in candidatos.items():
+        perfil = perfis[user_id]
+        inter = interesses.get(user_id, {})
+        for imovel_id in ids:
+            im = imoveis.get(imovel_id)
+            if not im or (user_id, imovel_id) in ja_enviados or silenciado(inter.get(imovel_id), im):
+                continue
+            for n in (1, 2):
+                d, _ = ler_data_leilao(im.get(f"data_{n}_leilao"))
+                if d != amanha or im.get(f"valor_{n}_leilao") is None:
+                    continue
+                fav = bool(inter.get(imovel_id, {}).get("favorito"))
+                extra = (f"{n}º leilão amanhã, {_data_curta(im.get(f'data_{n}_leilao'))}. "
+                         f"Lance mínimo: <b>{formatar_valor_telegram(im[f'valor_{n}_leilao'])}</b>")
+                if n == 1 and im.get("valor_2_leilao") is not None:
+                    extra += (f"\n<i>Se não vender: {formatar_valor_telegram(im['valor_2_leilao'])} no 2º leilão, "
+                              f"{_data_curta(im.get('data_2_leilao'))}.</i>")
+                texto, botoes = montar_mensagem(im, "Leilão amanhã", fav, imovel_id, extra, mostrar_pracas=False)
+                if enviar_telegram(perfil["chat_id"], texto, botoes):
+                    lembretes += 1
+                    registros.append({"user_id": user_id, "imovel_id": imovel_id, "data_leilao": amanha_txt})
+                time.sleep(1)
+                break
+    if registros:
+        resp = requests.post(f"{SUPABASE_URL}/rest/v1/lembrete_enviado",
+                             headers={**HEADERS_SB, "Prefer": "resolution=ignore-duplicates,return=minimal"},
+                             json=registros, timeout=30)
+        if not resp.ok:
+            print(f"aviso: não consegui registrar os lembretes enviados: {resp.status_code} {resp.text[:200]}", file=sys.stderr)
+    print(f"Telegram: {lembretes} lembrete(s) de véspera enviado(s).")
+
+
+# ------------------------------------------------- situação da execução
+
+def _rotulo_busca() -> str:
+    return f"Busca das {datetime.now(FUSO_BRASILIA).hour}h"
+
+
+def _link_execucao() -> str | None:
+    srv, repo, run = os.environ.get("GITHUB_SERVER_URL"), os.environ.get("GITHUB_REPOSITORY"), os.environ.get("GITHUB_RUN_ID")
+    return f"{srv}/{repo}/actions/runs/{run}" if srv and repo and run else None
+
+
+def carregar_ultimo_status() -> dict | None:
+    try:
+        linhas = _get_json("status_execucao", {"select": "*", "order": "executado_em.desc", "limit": "1"})
+        return linhas[0] if linhas else None
+    except Exception as exc:  # noqa: BLE001
+        print(f"aviso: não consegui ler a última situação ({exc})", file=sys.stderr)
+        return None
+
+
+def registrar_status(status: str, assinatura: str | None, detalhes: str | None) -> None:
+    try:
+        requests.post(f"{SUPABASE_URL}/rest/v1/status_execucao",
+                      headers={**HEADERS_SB, "Prefer": "return=minimal"},
+                      json={"status": status, "assinatura": assinatura, "detalhes": detalhes}, timeout=30)
+    except Exception as exc:  # noqa: BLE001
+        print(f"aviso: não consegui registrar a situação ({exc})", file=sys.stderr)
+
+
+def avisar_admin(texto: str) -> None:
+    if not (TELEGRAM_BOT_TOKEN and TELEGRAM_ADMIN_CHAT_ID):
+        return
+    link = _link_execucao()
+    enviar_telegram(TELEGRAM_ADMIN_CHAT_ID, texto, [("Ver detalhes da execução", link)] if link else None)
+    # marca pro passo de falha do workflow não mandar um segundo aviso
+    try:
+        open(os.path.join(os.environ.get("RUNNER_TEMP", "/tmp"), "radar_alerta_enviado"), "w").close()
+    except OSError:
+        pass
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Radar de Leilões Caixa — roda no GitHub Actions, grava no Supabase.")
+    parser.add_argument("--sem-detalhes", action="store_true",
+                         help="pula a busca da página individual de cada imóvel (mais rápido, menos dados)")
+    args = parser.parse_args()
+
+    ultimo = carregar_ultimo_status()
+    problemas: list[tuple[str, str]] = []
+    try:
+        resumo = executar(args, problemas)
+    except Exception as exc:  # noqa: BLE001
+        assinatura = f"falha:{type(exc).__name__}"
+        detalhes = f"{type(exc).__name__}: {str(exc)[:400]}"
+        registrar_status("falha", assinatura, detalhes)
+        repetido = ultimo and ultimo.get("status") == "falha" and ultimo.get("assinatura") == assinatura
+        if not repetido:
+            avisar_admin(f"❌ <b>Busca falhou</b>\n<b>{_rotulo_busca()} não terminou</b>\n{_esc(detalhes)}\n"
+                         "Nenhum imóvel foi atualizado nesta rodada. Tento de novo no próximo horário.")
+        else:
+            # mesmo problema da última vez: não repete o aviso, mas marca pro
+            # passo de falha do workflow também não mandar
+            try:
+                open(os.path.join(os.environ.get("RUNNER_TEMP", "/tmp"), "radar_alerta_enviado"), "w").close()
+            except OSError:
+                pass
+        raise
+
+    if problemas:
+        assinatura = ";".join(sorted(k for k, _ in problemas))
+        registrar_status("parcial", assinatura, "\n".join(t for _, t in problemas))
+        repetido = ultimo and ultimo.get("status") == "parcial" and ultimo.get("assinatura") == assinatura
+        if not repetido:
+            corpo = "\n".join(_esc(t) for _, t in problemas)
+            avisar_admin(f"⚠️ <b>Busca incompleta</b>\n<b>{_rotulo_busca()} terminou com problemas</b>\n{corpo}")
+    else:
+        registrar_status("ok", None, None)
+        if ultimo and ultimo.get("status") in ("parcial", "falha"):
+            ufs = ", ".join(resumo.get("ufs") or []) or "nenhum estado"
+            avisar_admin(f"✅ <b>Voltou ao normal</b>\n<b>{_rotulo_busca()} funcionou</b>\n"
+                         f"Atualizados: {ufs}. {resumo.get('novos', 0)} imóvel(is) novo(s), "
+                         f"{resumo.get('mudados', 0)} com mudança.")
     return 0
 
 
