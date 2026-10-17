@@ -624,7 +624,7 @@ def enviar_telegram(chat_id: str, texto: str, botoes: list[tuple[str, str]] | No
         return False
 
 
-def vincular_chat_id_telegram(user_id: str, chat_id: str) -> None:
+def vincular_chat_id_telegram(user_id: str, chat_id: str) -> bool:
     """Grava direto via service_role — aqui não tem auth.uid() de sessão
     (é o robô rodando, não uma pessoa logada), então manda o user_id
     explicitamente no payload."""
@@ -637,15 +637,26 @@ def vincular_chat_id_telegram(user_id: str, chat_id: str) -> None:
     )
     if not resp.ok:
         print(f"    aviso: falha ao vincular chat_id do usuário {user_id}: {resp.status_code} {resp.text}", file=sys.stderr)
+    return resp.ok
 
 
-def processar_vinculos_telegram() -> None:
+def processar_vinculos_telegram() -> list[str]:
     """Lê as mensagens pendentes do bot (via getUpdates), acha quem mandou
     '/start <user_id>' pelo link/QR Code do painel, e vincula o chat_id
     daquela pessoa à conta dela — sem precisar de servidor rodando o
     tempo todo, só aproveitando as execuções agendadas do robô."""
+    falhas_vinculo: list[str] = []
     if not TELEGRAM_BOT_TOKEN:
-        return
+        return falhas_vinculo
+    # Com webhook ligado, a Edge Function do Supabase conecta as contas na hora e
+    # o Telegram recusa o getUpdates (conflito). Então, nesse caso, não há o que ler aqui.
+    try:
+        info = requests.get(f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getWebhookInfo", timeout=20).json()
+        if isinstance(info, dict) and (info.get("result") or {}).get("url"):
+            print("Telegram: conexão automática por webhook ativa — não preciso ler mensagens aqui.")
+            return falhas_vinculo
+    except Exception:  # noqa: BLE001
+        pass  # se não deu pra checar, segue pro método antigo
     try:
         resp = requests.get(
             f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/getUpdates",
@@ -656,14 +667,15 @@ def processar_vinculos_telegram() -> None:
         dados = resp.json()
     except Exception as exc:  # noqa: BLE001
         print(f"aviso: não consegui checar mensagens do Telegram: {exc}", file=sys.stderr)
-        return
+        return falhas_vinculo
 
     resultados = dados.get("result", [])
     if not resultados:
-        return
+        return falhas_vinculo
 
     maior_update_id = None
     vinculados = 0
+    ja_vinculados: set = set()
     for atualizacao in resultados:
         maior_update_id = atualizacao["update_id"]
         msg = atualizacao.get("message") or {}
@@ -675,12 +687,20 @@ def processar_vinculos_telegram() -> None:
         if len(partes) < 2:
             continue
         user_id = partes[1].strip()
-        vincular_chat_id_telegram(user_id, chat_id)
-        vinculados += 1
+        if (user_id, chat_id) in ja_vinculados:
+            continue
+        ja_vinculados.add((user_id, chat_id))
+        if vincular_chat_id_telegram(user_id, chat_id):
+            vinculados += 1
+            texto = "✅ Pronto! A partir de agora você recebe aqui os avisos de imóvel do Radar de Leilões Caixa."
+        else:
+            texto = ("⚠️ Recebi o seu pedido, mas não consegui salvar a conexão. "
+                     "Avise o administrador do sistema; depois escaneie o QR Code de novo.")
+            falhas_vinculo.append(f"não consegui salvar a conexão do Telegram do usuário {user_id}")
         try:
             requests.post(
                 f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
-                json={"chat_id": chat_id, "text": "✅ Pronto! A partir de agora você recebe aqui os avisos de imóvel do Radar de Leilões Caixa."},
+                json={"chat_id": chat_id, "text": texto},
                 timeout=15,
             )
         except Exception:  # noqa: BLE001
@@ -699,12 +719,14 @@ def processar_vinculos_telegram() -> None:
             )
         except Exception:  # noqa: BLE001
             pass
+    return falhas_vinculo
 
 
 def executar(args, problemas: list[tuple[str, str]]) -> dict:
     """A busca em si. Problemas que não derrubam a execução vão pra lista
     `problemas` como (chave, texto) e viram aviso pro administrador."""
-    processar_vinculos_telegram()
+    for falha in processar_vinculos_telegram():
+        problemas.append(("vinculo", falha[0].upper() + falha[1:] + ". Provável falta de permissão na tabela perfil_usuario (rode liberar_acesso.sql)."))
 
     filtros = carregar_filtros_ativos()
     if not filtros:
