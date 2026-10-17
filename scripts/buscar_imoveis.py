@@ -250,19 +250,56 @@ def html_para_texto(pagina_html: str) -> str:
     return texto
 
 
+def _texto_do_titulo(trecho: str) -> str | None:
+    """Texto que vem logo depois do primeiro <h1..h6> do trecho, até a próxima tag
+    de QUALQUER tipo. Na página da Caixa o <h5> do nome é seguido de dezenas de
+    <input type="hidden"> antes do </h5>, então não dá pra exigir só texto até o fechamento."""
+    m = re.search(r"<h[1-6][^>]*>\s*([^<]{2,100}?)\s*(?:<|$)", trecho, re.I)
+    if not m:
+        return None
+    nome = re.sub(r"\s+", " ", html_module.unescape(m.group(1))).strip()
+    if not nome or not re.search(r"[A-Za-zÀ-ÿ]", nome):
+        return None
+    return nome
+
+
+# campos que só vêm da página de detalhe (o CSV não traz)
+CAMPOS_DETALHE = ("valor_1_leilao", "data_1_leilao", "valor_2_leilao", "data_2_leilao",
+                  "matricula", "inscricao_imobiliaria", "comarca", "edital", "leiloeiro",
+                  "foto_url", "numero_formatado", "empreendimento")
+
+# o <h5> também aparece em páginas de erro ("Nenhum imóvel encontrado...", sistema fora do ar):
+# isso nunca pode virar nome de empreendimento
+TITULOS_QUE_NAO_SAO_NOME = re.compile(r"nenhum|n[aã]o encontrad|encontrad[oa]s? para|indispon|erro|tente novamente|manuten", re.I)
+
+
 def extrair_titulo_empreendimento(html_bruto: str) -> str | None:
-    """No único exemplo real que consegui confirmar, o nome do empreendimento
-    aparece como um título (heading) no topo da página, sem rótulo nenhum,
-    logo antes de 'Valor de avaliação'. Pega o heading mais próximo dali."""
+    """O nome do empreendimento é o título (<h5>) no topo do bloco de dados do imóvel
+    (<div id="dadosImovel">), sem rótulo. Imóvel sem nome fica com o título vazio e
+    devolve None, e a informação é omitida. Só vale em página de detalhe de verdade
+    (a de erro não tem "Valor de avaliação")."""
+    if "valor de avalia" not in html_bruto.lower():
+        return None
+    nome = _extrair_titulo(html_bruto)
+    if nome and TITULOS_QUE_NAO_SAO_NOME.search(nome):
+        return None
+    return nome
+
+
+def _extrair_titulo(html_bruto: str) -> str | None:
+    pos = html_bruto.find('id="dadosImovel"')
+    if pos != -1:
+        return _texto_do_titulo(html_bruto[pos:pos + 3000])
+    # página fora do padrão: pega o título mais próximo antes de "Valor de avaliação"
     pos_valor = html_bruto.lower().find("valor de avalia")
     if pos_valor == -1:
         return None
-    trecho = html_bruto[:pos_valor]
-    matches = list(re.finditer(r"<h[1-6][^>]*>\s*([^<]{2,80}?)\s*</h[1-6]>", trecho, re.I))
-    if not matches:
-        return None
-    nome = re.sub(r"\s+", " ", matches[-1].group(1)).strip()
-    return nome or None
+    candidatos = [m.start() for m in re.finditer(r"<h[1-6][^>]*>", html_bruto[:pos_valor], re.I)]
+    for inicio in reversed(candidatos):
+        nome = _texto_do_titulo(html_bruto[inicio:pos_valor])
+        if nome:
+            return nome
+    return None
 
 
 def buscar_detalhe(numero_imovel: str) -> dict:
@@ -303,10 +340,10 @@ def buscar_detalhe(numero_imovel: str) -> dict:
 
     return {
         "numero_formatado": buscar(r"N[úu]mero do im[óo]vel[:\s]*([\d\-]+)"),
-        "empreendimento": buscar_qualquer([
+        "empreendimento": extrair_titulo_empreendimento(resp.text) or buscar_qualquer([
             r"Empreendimento[:\s]*([^\n]{1,80}?)\s+(?:Tipo de im[óo]vel|Quartos|Matr[íi]cula|Comarca|Valor de avalia|$)",
             r"Nome do empreendimento[:\s]*([^\n]{1,80}?)\s+(?:Tipo de im[óo]vel|Quartos|Matr[íi]cula|Comarca|Valor de avalia|$)",
-        ]) or extrair_titulo_empreendimento(resp.text),
+        ]),
         "valor_1_leilao": parse_decimal(buscar_qualquer([
             r"Data do 1[ºo] Leil[ãa]o[^R]{0,60}R\$\s*([\d.,]+)",
             r"1[ºo]\s*Leil[ãa]o[^R]{0,40}R\$\s*([\d.,]+)",
@@ -860,18 +897,19 @@ def executar(args, problemas: list[tuple[str, str]]) -> dict:
             (anterior.get("modalidade") or "") != (im.get("modalidade") or "")
             or round(float(anterior.get("preco") or 0), 2) != round(float(im.get("preco") or 0), 2)
         )
-        if im["_eh_novo"] or im["_mudou"]:
+        if im["_eh_novo"] or im["_mudou"] or args.atualizar_detalhes:
             alvo_detalhe.append(im)
         elif anterior:
-            for campo in ("valor_1_leilao", "data_1_leilao", "valor_2_leilao", "data_2_leilao",
-                          "matricula", "inscricao_imobiliaria", "comarca", "edital", "leiloeiro",
-                          "foto_url", "numero_formatado", "empreendimento"):
+            for campo in CAMPOS_DETALHE:
                 if im.get(campo) is None:
                     im[campo] = anterior.get(campo)
 
     if not args.sem_detalhes and alvo_detalhe:
-        print(f"Buscando detalhe individual de {len(alvo_detalhe)} imóveis novos ou com modalidade/preço "
-              f"diferentes de antes (os que não mudaram reaproveitam o que já tínhamos)...")
+        if args.atualizar_detalhes:
+            print(f"Relendo o detalhe de TODOS os {len(alvo_detalhe)} imóveis dos alertas (atualização forçada, sem avisos extras)...")
+        else:
+            print(f"Buscando detalhe individual de {len(alvo_detalhe)} imóveis novos ou com modalidade/preço "
+                  f"diferentes de antes (os que não mudaram reaproveitam o que já tínhamos)...")
         erros_detalhe = 0
         for i, im in enumerate(alvo_detalhe, start=1):
             print(f"  [{i}/{len(alvo_detalhe)}] imóvel nº {im['numero_imovel']}...")
@@ -880,7 +918,13 @@ def executar(args, problemas: list[tuple[str, str]]) -> dict:
                 erros_detalhe += 1
                 print(f"    aviso: não consegui buscar o detalhe ({detalhe['_erro_detalhe']})")
             else:
-                im.update(detalhe)
+                im.update({k: v for k, v in detalhe.items() if v is not None})
+                print("    empreendimento: " + (im.get("empreendimento") or "(sem nome na página)"))
+            # página que falhou ou veio vazia não pode apagar o que já estava salvo
+            anterior = estado_anterior.get(f"{im['uf']}:{im['numero_imovel']}") or {}
+            for campo in CAMPOS_DETALHE:
+                if im.get(campo) is None and anterior.get(campo) is not None:
+                    im[campo] = anterior[campo]
             time.sleep(0.6)  # educado com o servidor da Caixa
         if erros_detalhe >= 3 and erros_detalhe > len(alvo_detalhe) * 0.25:
             problemas.append(("detalhe", f"{erros_detalhe} de {len(alvo_detalhe)} páginas de detalhe não abriram. "
@@ -1236,6 +1280,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Radar de Leilões Caixa — roda no GitHub Actions, grava no Supabase.")
     parser.add_argument("--sem-detalhes", action="store_true",
                          help="pula a busca da página individual de cada imóvel (mais rápido, menos dados)")
+    parser.add_argument("--atualizar-detalhes", action="store_true",
+                         help="relê a página de detalhe de TODOS os imóveis dos alertas, sem gerar avisos "
+                              "(útil uma vez, depois de melhorar a leitura da página)")
     args = parser.parse_args()
 
     ultimo = carregar_ultimo_status()
