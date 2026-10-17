@@ -266,7 +266,7 @@ def _texto_do_titulo(trecho: str) -> str | None:
 # campos que só vêm da página de detalhe (o CSV não traz)
 CAMPOS_DETALHE = ("valor_1_leilao", "data_1_leilao", "valor_2_leilao", "data_2_leilao",
                   "matricula", "inscricao_imobiliaria", "comarca", "edital", "leiloeiro",
-                  "foto_url", "numero_formatado", "empreendimento")
+                  "foto_url", "numero_formatado", "empreendimento", "cep")
 
 # o <h5> também aparece em páginas de erro ("Nenhum imóvel encontrado...", sistema fora do ar):
 # isso nunca pode virar nome de empreendimento
@@ -300,6 +300,15 @@ def _extrair_titulo(html_bruto: str) -> str | None:
         if nome:
             return nome
     return None
+
+
+def extrair_cep(texto: str) -> str | None:
+    """CEP do imóvel, no formato 12345-678. Na página da Caixa ele vem dentro da linha do
+    endereço ("... RIO VERMELHO - CEP: 41940-220, SALVADOR - BAHIA"); não existe no CSV.
+    Só vale o CEP que está no bloco do "Endereço:" (antes da "Descrição"): um CEP de outra
+    parte da página nunca é aceito, porque um CEP errado no mapa é pior que nenhum."""
+    m = re.search(r"Endere[çc]o\s*:(?:(?!Descri[çc][ãa]o).){0,500}?CEP\s*:?\s*(\d{5})[-\s.]?(\d{3})", texto, re.I | re.S)
+    return f"{m.group(1)}-{m.group(2)}" if m else None
 
 
 def buscar_detalhe(numero_imovel: str) -> dict:
@@ -340,6 +349,7 @@ def buscar_detalhe(numero_imovel: str) -> dict:
 
     return {
         "numero_formatado": buscar(r"N[úu]mero do im[óo]vel[:\s]*([\d\-]+)"),
+        "cep": extrair_cep(texto),
         "empreendimento": extrair_titulo_empreendimento(resp.text) or buscar_qualquer([
             r"Empreendimento[:\s]*([^\n]{1,80}?)\s+(?:Tipo de im[óo]vel|Quartos|Matr[íi]cula|Comarca|Valor de avalia|$)",
             r"Nome do empreendimento[:\s]*([^\n]{1,80}?)\s+(?:Tipo de im[óo]vel|Quartos|Matr[íi]cula|Comarca|Valor de avalia|$)",
@@ -942,6 +952,7 @@ def executar(args, problemas: list[tuple[str, str]]) -> dict:
             "numero_imovel": im["numero_imovel"],
             "numero_formatado": im.get("numero_formatado"),
             "empreendimento": im.get("empreendimento"),
+            "cep": im.get("cep"),
             "cidade": im.get("cidade"),
             "bairro": im.get("bairro"),
             "endereco": im.get("endereco"),
