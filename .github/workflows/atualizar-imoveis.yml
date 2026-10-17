@@ -6,7 +6,12 @@ on:
     - cron: "0 13 * * *"   # 10:00 em Brasília
     - cron: "0 18 * * *"   # 15:00 em Brasília
     - cron: "0 23 * * *"   # 20:00 em Brasília (é nesta que saem os lembretes de véspera)
-  workflow_dispatch: {}  # permite rodar manualmente pela aba "Actions" no GitHub
+  workflow_dispatch:       # permite rodar manualmente pela aba "Actions" no GitHub
+    inputs:
+      atualizar_detalhes:
+        description: "Reler a página de detalhe de TODOS os imóveis (marque uma vez depois de uma melhoria na leitura)"
+        type: boolean
+        default: false
 
 jobs:
   buscar-imoveis:
@@ -30,7 +35,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
           PAINEL_URL: ${{ vars.PAINEL_URL }}
-        run: python scripts/buscar_imoveis.py
+        run: python scripts/buscar_imoveis.py ${{ inputs.atualizar_detalhes && '--atualizar-detalhes' || '' }}
 
       # Rede de segurança: se algo quebrou antes do próprio robô conseguir
       # avisar (ex.: falha ao instalar dependências, segredo faltando), manda
