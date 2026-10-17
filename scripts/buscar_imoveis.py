@@ -335,7 +335,56 @@ def link_mapa(endereco: str, bairro: str, cidade: str, uf: str) -> str:
     return f"https://www.google.com/maps/search/?api=1&query={q}"
 
 
-def imovel_bate(imovel: dict, cidade: str, bairros: list[str], valor_min: float, valor_max: float) -> bool:
+def categoria_tipo(tipo: str | None) -> str:
+    t = normalize(tipo)
+    if "apart" in t:
+        return "Apartamento"
+    if "casa" in t or "sobrado" in t:
+        return "Casa"
+    if "terreno" in t or "lote" in t or "gleba" in t:
+        return "Terreno"
+    return "Comercial e outros"
+
+
+def grupo_modalidade(modalidade: str | None) -> str:
+    t = normalize(modalidade)
+    if "leil" in t:
+        return "leilao"
+    if "licita" in t:
+        return "licitacao"
+    return "direta"
+
+
+def passa_criterios(im: dict, crit: dict | None) -> bool:
+    """Critérios avançados do alerta (mesma lógica dos "Mais filtros" do painel).
+    Sem critérios, tudo passa. O desconto usa o preço atual do CSV da Caixa."""
+    if not crit:
+        return True
+    fatos = im.get("fatos") or {}
+    tipos = crit.get("tipos") or []
+    if tipos and categoria_tipo(fatos.get("tipo")) not in tipos:
+        return False
+    quartos = crit.get("quartos")
+    if quartos and (fatos.get("quartos") or 0) < quartos:
+        return False
+    area = crit.get("area")
+    if area and (fatos.get("area_privativa") or fatos.get("area_total") or 0) < area:
+        return False
+    desconto = crit.get("desconto")
+    if desconto:
+        av, preco = im.get("valor_avaliacao"), im.get("preco")
+        if not av or preco is None or (av - preco) / av * 100 < desconto:
+            return False
+    modalidades = crit.get("modalidades") or []
+    if modalidades and grupo_modalidade(im.get("modalidade")) not in modalidades:
+        return False
+    if crit.get("financiamento") and im.get("financiamento") is not True:
+        return False
+    return True
+
+
+def imovel_bate(imovel: dict, cidade: str, bairros: list[str], valor_min: float, valor_max: float,
+                criterios: dict | None = None) -> bool:
     if normalize(imovel["cidade"]) != normalize(cidade):
         return False
     if bairros:
@@ -347,6 +396,10 @@ def imovel_bate(imovel: dict, cidade: str, bairros: list[str], valor_min: float,
     valor = imovel.get("valor_avaliacao")
     if valor is None or not (valor_min <= valor <= valor_max):
         return False
+    if criterios:
+        if "fatos" not in imovel:
+            imovel["fatos"] = parse_descricao_estruturada(imovel.get("descricao"))
+        return passa_criterios(imovel, criterios)
     return True
 
 
@@ -391,6 +444,7 @@ def carregar_filtros_ativos() -> list[dict]:
             "bairros": f.get("bairros") or [],
             "valor_min": f.get("valor_min") or 0,
             "valor_max": f["valor_max"] if f.get("valor_max") is not None else float("inf"),
+            "criterios": f.get("criterios") or {},
         })
     return filtros
 
@@ -499,6 +553,7 @@ def carregar_perfis() -> dict[str, dict]:
             "avisar_novo": row.get("avisar_novo", True) is not False,
             "avisar_mudanca": row.get("avisar_mudanca", True) is not False,
             "lembrete_vespera": row.get("lembrete_vespera") or "favoritos",
+            "formato": row.get("formato_aviso") or "individual",
         }
     return perfis
 
@@ -624,15 +679,29 @@ def enviar_telegram(chat_id: str, texto: str, botoes: list[tuple[str, str]] | No
         return False
 
 
+TOKEN_VINCULO = re.compile(r"^[A-Za-z0-9_-]{16,64}$")
+
+
+def resolver_token_vinculo(token: str) -> str | None:
+    """Código de uso único do QR Code -> user_id, se ainda não expirou."""
+    if not TOKEN_VINCULO.match(token or ""):
+        return None
+    linhas = _get_json("perfil_usuario", {
+        "vinculo_token": f"eq.{token}",
+        "vinculo_expira": f"gt.{datetime.now(timezone.utc).isoformat()}",
+        "select": "user_id",
+    })
+    return linhas[0]["user_id"] if linhas else None
+
+
 def vincular_chat_id_telegram(user_id: str, chat_id: str) -> bool:
-    """Grava direto via service_role — aqui não tem auth.uid() de sessão
-    (é o robô rodando, não uma pessoa logada), então manda o user_id
-    explicitamente no payload."""
+    """Grava direto via service_role (aqui não há sessão de pessoa logada) e apaga
+    o código de uso único, que não pode ser usado de novo."""
     resp = requests.post(
         f"{SUPABASE_URL}/rest/v1/perfil_usuario",
         headers={**HEADERS_SB, "Prefer": "resolution=merge-duplicates,return=minimal"},
         params={"on_conflict": "user_id"},
-        json={"user_id": user_id, "telegram_chat_id": str(chat_id)},
+        json={"user_id": user_id, "telegram_chat_id": str(chat_id), "vinculo_token": None, "vinculo_expira": None},
         timeout=30,
     )
     if not resp.ok:
@@ -686,11 +755,18 @@ def processar_vinculos_telegram() -> list[str]:
         partes = texto.split(maxsplit=1)
         if len(partes) < 2:
             continue
-        user_id = partes[1].strip()
-        if (user_id, chat_id) in ja_vinculados:
+        codigo = partes[1].strip()
+        if (codigo, chat_id) in ja_vinculados:
             continue
-        ja_vinculados.add((user_id, chat_id))
-        if vincular_chat_id_telegram(user_id, chat_id):
+        ja_vinculados.add((codigo, chat_id))
+        try:
+            user_id = resolver_token_vinculo(codigo)
+        except Exception as exc:  # noqa: BLE001
+            print(f"    aviso: não consegui conferir o código de conexão: {exc}", file=sys.stderr)
+            user_id = None
+        if user_id is None:
+            texto = "⚠️ Esse link expirou ou já foi usado. Abra o painel e gere o QR Code de novo."
+        elif vincular_chat_id_telegram(user_id, chat_id):
             vinculados += 1
             texto = "✅ Pronto! A partir de agora você recebe aqui os avisos de imóvel do Radar de Leilões Caixa."
         else:
@@ -737,7 +813,8 @@ def executar(args, problemas: list[tuple[str, str]]) -> dict:
     for f in filtros:
         faixa = f"{formatar_valor(f['valor_min'])} até {formatar_valor(f['valor_max']) if f['valor_max'] != float('inf') else 'sem limite'}"
         bairros_txt = ", ".join(f["bairros"]) if f["bairros"] else "qualquer bairro"
-        print(f"  - {f['nome']}: {f['cidade']}/{f['estado']} — {bairros_txt} — {faixa}")
+        extra = " — com critérios avançados" if f.get("criterios") else ""
+        print(f"  - {f['nome']}: {f['cidade']}/{f['estado']} — {bairros_txt} — {faixa}{extra}")
 
     ufs = sorted({f["estado"] for f in filtros})
     imoveis_por_uf: dict[str, list[dict]] = {}
@@ -758,7 +835,7 @@ def executar(args, problemas: list[tuple[str, str]]) -> dict:
     chaves_por_filtro: dict[str, list[str]] = {f["id"]: [] for f in filtros}
     for f in filtros:
         for im in imoveis_por_uf.get(f["estado"], []):
-            if imovel_bate(im, f["cidade"], f["bairros"], f["valor_min"], f["valor_max"]):
+            if imovel_bate(im, f["cidade"], f["bairros"], f["valor_min"], f["valor_max"], f.get("criterios")):
                 chave = f"{im['uf']}:{im['numero_imovel']}"
                 if chave not in resultados_por_chave:
                     resultados_por_chave[chave] = dict(im)
@@ -903,6 +980,96 @@ def _buscar_imoveis_por_id(ids: list[str]) -> dict[str, dict]:
     return out
 
 
+def enfileirar_avisos(linhas: list[dict]) -> bool:
+    resp = requests.post(f"{SUPABASE_URL}/rest/v1/aviso_pendente",
+                         headers={**HEADERS_SB, "Prefer": "return=minimal"}, json=linhas, timeout=30)
+    if not resp.ok:
+        print(f"aviso: não consegui guardar avisos pro resumo: {resp.status_code} {resp.text[:200]}", file=sys.stderr)
+    return resp.ok
+
+
+def montar_resumo(itens: list[dict], imoveis: dict[str, dict], inter: dict) -> list[str]:
+    """Uma mensagem (ou mais, se passar de ~3.500 caracteres) com tudo do dia.
+    Favoritos num bloco próprio, no topo."""
+    por_imovel: dict[str, dict] = {}
+    for it in itens:
+        if it["imovel_id"] not in por_imovel or it["tipo"] == "novo":  # "novo" vale mais que "mudou"
+            por_imovel[it["imovel_id"]] = it
+    favoritos, novos, mudancas = [], [], []
+    for imovel_id, it in por_imovel.items():
+        im = imoveis.get(imovel_id)
+        if not im or silenciado(inter.get(imovel_id), im):
+            continue
+        fav = bool(inter.get(imovel_id, {}).get("favorito"))
+        valor = formatar_valor_telegram(im.get("preco"))
+        if it["tipo"] == "mudou" and it.get("detalhe"):
+            valor = f"de <s>{_esc(it['detalhe'])}</s> para <b>{valor}</b>"
+        else:
+            valor = f"<b>{valor}</b>"
+        rotulo = "Novo" if it["tipo"] == "novo" else "Mudou"
+        linha = (f"• <b>{_esc(im.get('bairro') or 'Bairro não informado')}</b>, {_esc(im.get('cidade'))} ({_esc(im.get('uf'))}). "
+                 f"{valor}, {_esc(im.get('modalidade') or 'venda')}. "
+                 f"<a href=\"{PAINEL_URL}#imovel={imovel_id}\">Ver no Radar</a>")
+        if fav:
+            favoritos.append(f"{linha} ({rotulo.lower()})")
+        elif it["tipo"] == "novo":
+            novos.append(linha)
+        else:
+            mudancas.append(linha)
+    n_novos = sum(1 for it in por_imovel.values() if it["tipo"] == "novo" and it["imovel_id"] in imoveis)
+    n_mud = sum(1 for it in por_imovel.values() if it["tipo"] == "mudou" and it["imovel_id"] in imoveis)
+    if not (favoritos or novos or mudancas):
+        return []
+    cabecalho = ["📋 <b>Resumo do dia</b>",
+                 f"{n_novos} {'novo' if n_novos == 1 else 'novos'}, {n_mud} {'mudança' if n_mud == 1 else 'mudanças'} de praça ou de preço.", ""]
+    blocos: list[str] = []
+    if favoritos:
+        blocos += ["⭐ <b>Seus favoritos</b>", *favoritos, ""]
+    if novos:
+        blocos += ["<b>Imóveis novos</b>", *novos, ""]
+    if mudancas:
+        blocos += ["<b>Mudanças de praça ou de preço</b>", *mudancas, ""]
+    mensagens, atual = [], list(cabecalho)
+    for linha in blocos:
+        if len("\n".join(atual)) + len(linha) > 3500:
+            mensagens.append("\n".join(atual).strip())
+            atual = ["<i>(continuação do resumo)</i>", ""]
+        atual.append(linha)
+    mensagens.append("\n".join(atual).strip())
+    return mensagens
+
+
+def enviar_resumos(perfis: dict, interesses: dict, agora_local: datetime) -> None:
+    quem = [u for u, p in perfis.items() if p.get("formato") == "resumo"]
+    if not quem:
+        return
+    try:
+        linhas = _get_json("aviso_pendente", {"user_id": f"in.({','.join(quem)})", "select": "*", "order": "criado_em.asc"})
+    except Exception as exc:  # noqa: BLE001
+        print(f"aviso: não consegui ler a fila do resumo: {exc}", file=sys.stderr)
+        return
+    por_user: dict[str, list[dict]] = {}
+    for l in linhas:
+        por_user.setdefault(l["user_id"], []).append(l)
+    enviados = 0
+    for user_id, itens in por_user.items():
+        mais_antigo = min(datetime.fromisoformat(l["criado_em"].replace("Z", "+00:00")) for l in itens)
+        horas = (datetime.now(timezone.utc) - mais_antigo).total_seconds() / 3600
+        if agora_local.hour < 18 and horas < 20:
+            continue  # ainda não é a busca da noite
+        imoveis = _buscar_imoveis_por_id(sorted({l["imovel_id"] for l in itens}))
+        mensagens = montar_resumo(itens, imoveis, interesses.get(user_id, {}))
+        chat_id = perfis[user_id]["chat_id"]
+        if all(enviar_telegram(chat_id, m) for m in mensagens):
+            enviados += 1 if mensagens else 0
+            ids = [l["id"] for l in itens]
+            for i in range(0, len(ids), 80):
+                requests.delete(f"{SUPABASE_URL}/rest/v1/aviso_pendente", headers=HEADERS_SB,
+                                params={"id": f"in.({','.join(ids[i:i + 80])})"}, timeout=30)
+        time.sleep(1)
+    print(f"Telegram: {enviados} resumo(s) enviado(s).")
+
+
 def enviar_avisos_e_lembretes(filtros, chaves_por_filtro, resultados_por_chave, ids_por_chave) -> None:
     perfis = carregar_perfis()
     if not perfis:
@@ -922,33 +1089,51 @@ def enviar_avisos_e_lembretes(filtros, chaves_por_filtro, resultados_por_chave, 
                 continue
             por_usuario.setdefault(f["user_id"], {})[imovel_id] = im
 
+    agora_local = datetime.now(FUSO_BRASILIA)
+
     # 1) imóvel novo / mudança de praça ou preço
     total = 0
+    enfileirados = 0
     for user_id, itens in por_usuario.items():
         perfil = perfis[user_id]
         inter = interesses.get(user_id, {})
         fila = []
+        para_resumo = []   # (linha da fila, fav, texto, botoes) de quem prefere o resumo das 20h
         for imovel_id, im in itens.items():
             if silenciado(inter.get(imovel_id), im):
                 continue
             fav = bool(inter.get(imovel_id, {}).get("favorito"))
+            tipo = detalhe = None
             if im.get("_eh_novo") and perfil["avisar_novo"]:
-                fila.append((fav, montar_mensagem(im, "Imóvel novo", fav, imovel_id)))
+                tipo, motivo, extra = "novo", "Imóvel novo", None
             elif im.get("_mudou") and perfil["avisar_mudanca"]:
-                extra = None
+                tipo, motivo, extra = "mudou", "Mudou de praça ou de preço", None
                 if im.get("_preco_anterior") is not None and im.get("preco") is not None:
-                    extra = (f"De <s>{formatar_valor_telegram(im['_preco_anterior'])}</s> para "
-                             f"<b>{formatar_valor_telegram(im['preco'])}</b>.")
-                fila.append((fav, montar_mensagem(im, "Mudou de praça ou de preço", fav, imovel_id, extra)))
+                    detalhe = formatar_valor_telegram(im["_preco_anterior"])
+                    extra = (f"De <s>{detalhe}</s> para <b>{formatar_valor_telegram(im['preco'])}</b>.")
+            if not tipo:
+                continue
+            texto_botoes = montar_mensagem(im, motivo, fav, imovel_id, extra)
+            if perfil.get("formato") == "resumo":
+                para_resumo.append(({"user_id": user_id, "imovel_id": imovel_id, "tipo": tipo, "detalhe": detalhe}, fav, *texto_botoes))
+            else:
+                fila.append((fav, texto_botoes))
+        if para_resumo:
+            if enfileirar_avisos([linha for linha, *_ in para_resumo]):
+                enfileirados += len(para_resumo)
+            else:  # não conseguiu guardar na fila: manda na hora, pra ninguém ficar sem aviso
+                fila.extend((fav, (texto, botoes)) for _, fav, texto, botoes in para_resumo)
         fila.sort(key=lambda x: not x[0])  # favoritos primeiro
         for _, (texto, botoes) in fila:
             if enviar_telegram(perfil["chat_id"], texto, botoes):
                 total += 1
             time.sleep(1)
-    print(f"Telegram: {total} aviso(s) de imóvel enviado(s).")
+    print(f"Telegram: {total} aviso(s) de imóvel enviado(s), {enfileirados} guardado(s) pro resumo da noite.")
+
+    # 1b) resumo único — vai na busca da noite (ou se algo ficou parado por mais de 20 h)
+    enviar_resumos(perfis, interesses, agora_local)
 
     # 2) lembrete na véspera — só na busca da noite (18h em diante, horário de Brasília)
-    agora_local = datetime.now(FUSO_BRASILIA)
     if agora_local.hour < 18:
         return
     amanha = agora_local.date() + timedelta(days=1)
