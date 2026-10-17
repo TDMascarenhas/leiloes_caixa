@@ -356,7 +356,7 @@ const NOMES_USUARIOS = {
   'lsboissard@gmail.com': 'Leonardo Boissard',
 };
 const HORARIOS_BUSCA = [10, 15, 20];          // horário de Brasília
-const HORAS_PARA_DESATUALIZADO = 8;
+const HORAS_PARA_DESATUALIZADO = 16;   // entre a busca das 20h e a das 10h passam 14h
 const UFS = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
 
 let sb = null;
@@ -596,6 +596,11 @@ async function carregarTudo() {
   S.custos = {};
   (rc.error ? [] : (rc.data || [])).forEach(c => { S.custos[c.imovel_id] = c; });
   S.status = rs.error ? [] : (rs.data || []);
+  // não esconder falha de leitura: se uma tabela não carrega, o painel avisa qual
+  S.erros = [];
+  [['filtros', rf], ['imóveis', ri], ['perfil_usuario', rp], ['custo_imovel', rc], ['status_execucao', rs]].forEach(([nome, r]) => {
+    if (r.error) { console.error('Erro ao ler ' + nome, r.error); S.erros.push(nome + ': ' + (r.error.message || r.error.code || 'erro')); }
+  });
   const ids = new Set(S.imoveis.map(i => i.id));
   S.sel.forEach(id => { if (!ids.has(id)) S.sel.delete(id); });
   render();
@@ -628,14 +633,20 @@ function renderStatus() {
   else if (desatualizado) { el.textContent = 'Última atualização: ' + hojeOuOntem(ultima); el.classList.add('alerta'); }
   else { el.textContent = 'Atualizado ' + hojeOuOntem(ultima) + '. Próxima busca ' + proximaBusca() + '.'; el.classList.remove('alerta'); }
 
+  let faixas = '';
+  if (S.erros && S.erros.length) {
+    faixas += '<section class="faixa faixa-aviso" role="alert">' + ICONES.aviso + '<p><b>Parte dos dados não carregou.</b> ' + esc(S.erros.join(' | '))
+      + '. Se a mensagem fala em "permission denied", falta liberar a tabela no Supabase (arquivo liberar_acesso.sql).</p></section>';
+  }
   if (desatualizado && (S.status.length || S.imoveis.length)) {
     const falhou = S.status[0] && S.status[0].status === 'falha';
     const texto = ultima
-      ? (falhou ? 'As últimas buscas falharam. ' : 'A busca não roda desde ' + hojeOuOntem(ultima) + '. ')
+      ? (falhou ? 'As últimas buscas falharam. ' : 'A busca não roda há mais de ' + HORAS_PARA_DESATUALIZADO + ' horas. ')
         + 'A lista pode estar desatualizada desde ' + hojeOuOntem(ultima) + '. Próxima tentativa ' + proximaBusca() + '.'
       : 'Nenhuma busca foi registrada ainda. A lista pode estar desatualizada.';
-    faixa.innerHTML = '<section class="faixa faixa-aviso" role="status">' + ICONES.aviso + '<p>' + esc(texto) + '</p></section>';
-  } else faixa.innerHTML = '';
+    faixas += '<section class="faixa faixa-aviso" role="status">' + ICONES.aviso + '<p>' + esc(texto) + '</p></section>';
+  }
+  faixa.innerHTML = faixas;
 }
 
 // ---------------- Meus alertas ----------------
@@ -969,7 +980,27 @@ async function removerDaLista(ids) {
 // =====================================================================
 // Modal genérico
 // =====================================================================
+let tgPoll = null;
+function pararPollTelegram() { if (tgPoll) { clearInterval(tgPoll); tgPoll = null; } }
+// enquanto a janela do Telegram está aberta e a conta não conectou, confere o banco
+// a cada 3 s; quando a conexão aparece, a janela vira "Conectado" sozinha
+function iniciarPollTelegram() {
+  pararPollTelegram();
+  const inicio = Date.now();
+  tgPoll = setInterval(async () => {
+    if (Date.now() - inicio > 10 * 60 * 1000 || $('modal-fundo').classList.contains('oculto')) { pararPollTelegram(); return; }
+    const { data } = await sb.from('perfil_usuario').select('telegram_chat_id').maybeSingle();
+    if (data && data.telegram_chat_id) {
+      pararPollTelegram();
+      await carregarTudo();
+      abrirNotificacoes();
+      toast('Telegram conectado.');
+    }
+  }, 3000);
+}
+
 function abrirModal(html, largo) {
+  pararPollTelegram();
   const f = $('modal-fundo');
   f.innerHTML = '<div class="modal' + (largo ? ' largo' : '') + '" role="dialog" aria-modal="true">' + html + '</div>';
   f.classList.remove('oculto');
@@ -978,6 +1009,7 @@ function abrirModal(html, largo) {
   if (foco) setTimeout(() => foco.focus(), 30);
 }
 function fecharModal() {
+  pararPollTelegram();
   $('modal-fundo').classList.add('oculto');
   $('modal-fundo').innerHTML = '';
   document.body.style.overflow = '';
@@ -1203,7 +1235,7 @@ function abrirNotificacoes() {
   } else if (!TELEGRAM_BOT_USERNAME.startsWith('COLE_AQUI') && S.user) {
     const link = 'https://t.me/' + TELEGRAM_BOT_USERNAME + '?start=' + S.user.id;
     con = '<div class="qr-linha"><img alt="QR Code para conectar no Telegram" width="150" height="150" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=' + encodeURIComponent(link) + '">'
-      + '<div style="flex:1 1 200px;display:flex;flex-direction:column;gap:10px"><p style="margin:0;font-size:14px">Escaneie o QR Code ou abra o link no celular e toque em <b>Iniciar</b>. Na próxima busca a conta fica conectada.</p>'
+      + '<div style="flex:1 1 200px;display:flex;flex-direction:column;gap:10px"><p style="margin:0;font-size:14px">Escaneie o QR Code ou abra o link no celular e toque em <b>Iniciar</b>. Esta janela atualiza sozinha quando a conexão for confirmada.</p>'
       + '<a class="btn btn-pri" href="' + link + '" target="_blank" rel="noopener">Abrir no Telegram</a></div></div>';
   } else {
     con = '<p class="caixa-cinza" style="margin:0">Falta configurar o nome do bot no painel (TELEGRAM_BOT_USERNAME). Enquanto isso, use o campo abaixo.</p>';
@@ -1218,6 +1250,7 @@ function abrirNotificacoes() {
     + '<label class="campo" style="margin-top:8px;flex-direction:row;align-items:center;gap:10px">Para<select id="pf-vesp-modo"><option value="favoritos"' + (modo !== 'todos' ? ' selected' : '') + '>Só os favoritos</option><option value="todos"' + (modo === 'todos' ? ' selected' : '') + '>Todos os meus imóveis</option></select></label></span></div>'
     + '</fieldset><p class="ajuda">Favoritos aparecem com ⭐ no começo da mensagem e chegam primeiro.</p></div>'
     + '<div class="modal-rodape"><button class="btn btn-sec btn-lg" data-acao="fechar-modal">Cancelar</button><button class="btn btn-pri btn-lg" data-acao="pf-salvar">Salvar preferências</button></div>');
+  if (!conectado && S.user) iniciarPollTelegram();
 }
 async function salvarPerfil(campos, msg) {
   const { error } = await sb.from('perfil_usuario').upsert(campos, { onConflict: 'user_id' });
