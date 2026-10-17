@@ -356,7 +356,9 @@ const NOMES_USUARIOS = {
   'lsboissard@gmail.com': 'Leonardo Boissard',
 };
 const HORARIOS_BUSCA = [10, 15, 20];          // horário de Brasília
-const HORAS_PARA_DESATUALIZADO = 16;   // entre a busca das 20h e a das 10h passam 14h
+// O GitHub atrasa as buscas agendadas de vez em quando. Só vira aviso se uma busca
+// prevista passar disso sem ter rodado.
+const TOLERANCIA_ATRASO_MIN = 120;
 const UFS = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','PA','PB','PR','PE','PI','RJ','RN','RS','RO','RR','SC','SP','SE','TO'];
 
 let sb = null;
@@ -431,6 +433,26 @@ function hojeOuOntem(d) {
   if (n === -1) return 'ontem às ' + hm;
   return dataCurta(d) + ' às ' + hm;
 }
+// A busca PREVISTA mais recente que já deveria ter rodado (horários fixos, Brasília = UTC-3)
+function buscaPrevistaAnterior(agora) {
+  const ref = new Date(agora.getTime() - 3 * 3600000);   // relógio de Brasília, lido em UTC
+  let melhor = null;
+  for (let dia = 0; dia >= -1; dia--) {
+    HORARIOS_BUSCA.forEach(h => {
+      const t = Date.UTC(ref.getUTCFullYear(), ref.getUTCMonth(), ref.getUTCDate() + dia, h + 3, 0, 0);
+      if (t <= agora.getTime() && (melhor == null || t > melhor)) melhor = t;
+    });
+  }
+  return new Date(melhor);
+}
+// Atrasada = uma busca prevista passou da tolerância e ainda não há busca bem-sucedida depois dela.
+// Quem olhou entre duas buscas fixas (ex.: às 11h, com a última às 20h de ontem) não vê alarme.
+function listaAtrasada(ultima, agora) {
+  agora = agora || new Date();
+  const prevista = buscaPrevistaAnterior(agora);
+  if (agora.getTime() - prevista.getTime() <= TOLERANCIA_ATRASO_MIN * 60000) return false;
+  return !ultima || ultima.getTime() < prevista.getTime();
+}
 function proximaBusca() {
   // horário de Brasília (UTC-3), independente do fuso do aparelho
   const agoraBr = new Date(Date.now() - 3 * 3600000);
@@ -441,6 +463,18 @@ function proximaBusca() {
 function linkMapa(im) {
   const partes = [im.empreendimento, im.endereco, im.bairro, (im.cidade || '') + ' - ' + (im.uf || '')].filter(Boolean);
   return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(partes.join(', '));
+}
+function criteriosTxt(c) {
+  if (!c) return '';
+  const p = [];
+  if (c.tipos && c.tipos.length) p.push(c.tipos.join(' ou '));
+  if (c.quartos) p.push(c.quartos + '+ quartos');
+  if (c.area) p.push('área a partir de ' + c.area + ' m²');
+  if (c.desconto) p.push('desconto a partir de ' + c.desconto + '%');
+  if (c.modalidades && c.modalidades.length && c.modalidades.length < 3)
+    p.push(c.modalidades.map(m => ({ leilao: 'leilão', direta: 'venda direta', licitacao: 'licitação' })[m]).join(' e '));
+  if (c.financiamento) p.push('aceita financiamento');
+  return p.join(', ');
 }
 function milTxt(v) {
   if (v == null) return '';
@@ -628,9 +662,13 @@ function renderStatus() {
   if (!ultima && !S.status.length && S.imoveis.length) {
     ultima = new Date(Math.max.apply(null, S.imoveis.map(i => new Date(i.atualizado_em).getTime())));
   }
-  const desatualizado = !ultima || (Date.now() - ultima.getTime()) / 3600000 > HORAS_PARA_DESATUALIZADO;
-  if (!ultima) { el.textContent = 'Ainda sem busca registrada.'; el.classList.add('alerta'); }
-  else if (desatualizado) { el.textContent = 'Última atualização: ' + hojeOuOntem(ultima); el.classList.add('alerta'); }
+  const ultimoStatus = S.status[0];
+  const falhaRecente = !!(ultimoStatus && ultimoStatus.status === 'falha' && (!ultima || new Date(ultimoStatus.executado_em) > ultima));
+  const temDados = S.status.length > 0 || S.imoveis.length > 0;
+  const atrasada = temDados && (falhaRecente || listaAtrasada(ultima));
+
+  if (!ultima) { el.textContent = 'Ainda sem busca registrada.'; el.classList.toggle('alerta', atrasada); }
+  else if (atrasada) { el.textContent = 'Última atualização: ' + hojeOuOntem(ultima); el.classList.add('alerta'); }
   else { el.textContent = 'Atualizado ' + hojeOuOntem(ultima) + '. Próxima busca ' + proximaBusca() + '.'; el.classList.remove('alerta'); }
 
   let faixas = '';
@@ -638,12 +676,16 @@ function renderStatus() {
     faixas += '<section class="faixa faixa-aviso" role="alert">' + ICONES.aviso + '<p><b>Parte dos dados não carregou.</b> ' + esc(S.erros.join(' | '))
       + '. Se a mensagem fala em "permission denied", falta liberar a tabela no Supabase (arquivo liberar_acesso.sql).</p></section>';
   }
-  if (desatualizado && (S.status.length || S.imoveis.length)) {
-    const falhou = S.status[0] && S.status[0].status === 'falha';
-    const texto = ultima
-      ? (falhou ? 'As últimas buscas falharam. ' : 'A busca não roda há mais de ' + HORAS_PARA_DESATUALIZADO + ' horas. ')
-        + 'A lista pode estar desatualizada desde ' + hojeOuOntem(ultima) + '. Próxima tentativa ' + proximaBusca() + '.'
-      : 'Nenhuma busca foi registrada ainda. A lista pode estar desatualizada.';
+  if (atrasada) {
+    const desde = ultima ? ' desde ' + hojeOuOntem(ultima) : '';
+    let texto;
+    if (falhaRecente) {
+      texto = 'A última busca falhou. A lista pode estar desatualizada' + desde + '. O sistema tenta de novo ' + proximaBusca() + '.';
+    } else {
+      const hPrev = new Date(buscaPrevistaAnterior(new Date()).getTime() - 3 * 3600000).getUTCHours();
+      texto = 'A busca das ' + hPrev + 'h ainda não apareceu. A lista pode estar desatualizada' + desde
+        + '. Se passar de mais algumas horas, avise o administrador do sistema.';
+    }
     faixas += '<section class="faixa faixa-aviso" role="status">' + ICONES.aviso + '<p>' + esc(texto) + '</p></section>';
   }
   faixa.innerHTML = faixas;
@@ -698,7 +740,8 @@ function cardAlerta(f) {
     + '<div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start"><h2>' + esc(f.nome) + '</h2>'
     + (f.ativo ? '<span class="tag tag-filtro">Ativo</span>' : '<span class="tag tag-pausado">Pausado</span>') + '</div>'
     + '<dl><dt>Local</dt><dd>' + esc(f.cidade) + ', ' + esc(f.estado) + '</dd><dt>Bairros</dt><dd>' + esc(bairros)
-    + '</dd><dt>Avaliação</dt><dd>' + esc(faixaTxt(f.valor_min, f.valor_max)) + '</dd></dl>'
+    + '</dd><dt>Avaliação</dt><dd>' + esc(faixaTxt(f.valor_min, f.valor_max)) + '</dd>'
+    + (criteriosTxt(f.criterios) ? '<dt>Critérios</dt><dd>' + esc(criteriosTxt(f.criterios)) + '</dd>' : '') + '</dl>'
     + '<div class="alerta-num">' + num + '</div>'
     + '<div class="alerta-acoes"><button class="btn btn-texto" data-acao="ver-alerta" data-id="' + f.id + '">Ver imóveis</button><span style="flex:1"></span>'
     + '<button class="btn btn-sec" data-acao="editar-alerta" data-id="' + f.id + '">Editar</button>'
@@ -785,7 +828,8 @@ function painelMaisFiltros() {
     + [['leilao', 'Leilão (1º e 2º)'], ['direta', 'Venda direta'], ['licitacao', 'Licitação aberta']].map(([v, t]) =>
       '<label class="marcar"><input type="checkbox" data-mf-mod="' + v + '"' + (mf.modalidades.has(v) ? ' checked' : '') + '>' + t + '</label>').join('') + '</fieldset>'
     + '<fieldset><legend>Pagamento</legend><label class="marcar"><input type="checkbox" id="mf-fin"' + (mf.financiamento ? ' checked' : '') + '>Só imóveis que aceitam financiamento</label></fieldset>'
-    + '</div><div class="ferr-rodape"><button class="btn btn-sec" data-acao="limpar-mf">Limpar estes filtros</button><span style="flex:1"></span>'
+    + '</div><div class="ferr-rodape"><button class="btn btn-sec" data-acao="limpar-mf">Limpar estes filtros</button>'
+    + (qtdMaisFiltros() ? '<button class="btn btn-texto" data-acao="mf-salvar-alerta">Salvar estes critérios num alerta</button>' : '') + '<span style="flex:1"></span>'
     + '<button class="btn btn-texto" data-acao="mais-filtros">Fechar</button></div>';
 }
 
@@ -1023,12 +1067,52 @@ function cabModal(titulo, sub) {
 let formAlerta = null;
 const FAIXAS = [['Até 100 mil', 0, 100000], ['100 a 200 mil', 100000, 200000], ['200 a 400 mil', 200000, 400000],
   ['400 a 750 mil', 400000, 750000], ['Acima de 750 mil', 750000, null], ['Qualquer valor', 0, null]];
-function abrirFormAlerta(id) {
+const MODALIDADES_TODAS = ['leilao', 'direta', 'licitacao'];
+function critDoFiltro(c) {
+  c = c || {};
+  return { tipos: [...(c.tipos || [])], quartos: c.quartos || 0, desconto: c.desconto || 0,
+    area: c.area ? String(c.area).replace('.', ',') : '',
+    modalidades: (c.modalidades && c.modalidades.length) ? [...c.modalidades] : [...MODALIDADES_TODAS],
+    financiamento: !!c.financiamento };
+}
+function critParaSalvar(c) {
+  const o = {};
+  if (c.tipos.length) o.tipos = c.tipos;
+  if (c.quartos) o.quartos = c.quartos;
+  if (c.desconto) o.desconto = c.desconto;
+  const area = parseBR(c.area); if (area) o.area = area;
+  if (c.modalidades.length && c.modalidades.length < 3) o.modalidades = c.modalidades;
+  if (c.financiamento) o.financiamento = true;
+  return Object.keys(o).length ? o : null;
+}
+// base (opcional, só pra alerta novo): { crit, filtro } — copia critérios e/ou local de outro alerta
+function abrirFormAlerta(id, base) {
   const f = id ? S.filtros.find(x => x.id === id) : null;
-  formAlerta = { id: f ? f.id : null, estado: f ? f.estado : 'BA', cidade: f ? f.cidade : '', bairros: f ? [...(f.bairros || [])] : [],
-    min: f ? (Number(f.valor_min) || 0) : 0, max: f ? (f.valor_max == null ? null : Number(f.valor_max)) : null,
-    nome: f ? f.nome : '', nomeManual: !!f };
+  const src = f || (base && base.filtro) || null;
+  const crit = base && base.crit ? base.crit : critDoFiltro(src ? src.criterios : null);
+  formAlerta = { id: f ? f.id : null, estado: src ? src.estado : 'BA', cidade: src ? src.cidade : '', bairros: src ? [...(src.bairros || [])] : [],
+    min: src ? (Number(src.valor_min) || 0) : 0, max: src ? (src.valor_max == null ? null : Number(src.valor_max)) : null,
+    nome: f ? f.nome : '', nomeManual: !!f, crit, tinhaCrit: !!(f && f.criterios) };
+  formAlerta.avancado = !!critParaSalvar(crit);
   desenharFormAlerta();
+}
+function htmlAvancado(a) {
+  const c = a.crit;
+  if (!a.avancado) {
+    return '<button type="button" class="btn btn-sec" data-acao="fa-avancado" style="align-self:flex-start">' + ICONES.filtro + 'Filtros avançados (tipo, quartos, desconto...)</button>';
+  }
+  const pil = (v, ativo) => '<button type="button" class="pilula" data-acao="fa-crit" data-grupo="tipo" data-valor="' + esc(v) + '" aria-pressed="' + ativo + '">' + esc(v) + '</button>';
+  const seg = (g, ops, atual) => '<div class="segmento">' + ops.map(([v, t]) =>
+    '<button type="button" data-acao="fa-crit" data-grupo="' + g + '" data-valor="' + v + '" aria-pressed="' + (atual === v) + '">' + t + '</button>').join('') + '</div>';
+  return '<fieldset><legend>Filtros avançados</legend>'
+    + '<p class="ajuda">Só imóveis que baterem em tudo isto entram no alerta e geram aviso no Telegram.</p>'
+    + '<div class="campo">Tipo de imóvel<div class="pilulas">' + ['Apartamento', 'Casa', 'Terreno', 'Comercial e outros'].map(t => pil(t, c.tipos.includes(t))).join('') + '</div></div>'
+    + '<div class="campo">Quartos' + seg('quartos', [[0, 'Qualquer'], [1, '1+'], [2, '2+'], [3, '3+'], [4, '4+']], c.quartos) + '</div>'
+    + '<div class="campo">Desconto mínimo sobre a avaliação' + seg('desconto', [[0, 'Qualquer'], [10, '10%'], [20, '20%'], [30, '30%'], [40, '40%']], c.desconto) + '</div>'
+    + '<label class="campo">Área mínima (m²)<input id="fa-area" inputmode="numeric" value="' + esc(c.area) + '" placeholder="ex: 40" style="max-width:140px"></label>'
+    + '<div class="campo">Modalidade' + [['leilao', 'Leilão (1º e 2º)'], ['direta', 'Venda direta'], ['licitacao', 'Licitação aberta']].map(([v, t]) =>
+      '<label class="marcar"><input type="checkbox" data-fa-mod="' + v + '"' + (c.modalidades.includes(v) ? ' checked' : '') + '>' + t + '</label>').join('') + '</div>'
+    + '<label class="marcar"><input type="checkbox" id="fa-fin"' + (c.financiamento ? ' checked' : '') + '>Só imóveis que aceitam financiamento</label></fieldset>';
 }
 function nomeSugerido() {
   const a = formAlerta;
@@ -1056,6 +1140,7 @@ function desenharFormAlerta() {
     + FAIXAS.map(([t], i) => '<button type="button" class="pilula" data-acao="fa-faixa" data-i="' + i + '" aria-pressed="' + (i === faixaAtiva) + '">' + t + '</button>').join('')
     + '</div><div class="grade2"><label class="campo">De (R$)<input id="fa-min" inputmode="decimal" value="' + (a.min ? numBR(a.min) : '') + '" placeholder="0"></label>'
     + '<label class="campo">Até (R$)<input id="fa-max" inputmode="decimal" value="' + (a.max == null ? '' : numBR(a.max)) + '" placeholder="sem limite"></label></div></fieldset>'
+    + htmlAvancado(a)
     + '<fieldset><legend>Nome do alerta</legend><label class="campo">' + (a.nomeManual ? 'Nome' : 'Sugerido a partir do que você escolheu. Pode mudar.')
     + '<input id="fa-nome" value="' + esc(a.nome) + '"></label></fieldset>'
     + '<p class="caixa-cinza" style="margin:0">A busca com estes critérios roda na próxima atualização, ' + proximaBusca() + '.</p>'
@@ -1070,6 +1155,7 @@ function lerFormAlerta() {
   a.min = parseBR($('fa-min').value) || 0;
   a.max = parseBR($('fa-max').value);
   a.nome = $('fa-nome').value.trim();
+  if ($('fa-area')) a.crit.area = $('fa-area').value;
 }
 function addBairro() {
   const inp = $('fa-bairro');
@@ -1087,6 +1173,9 @@ async function salvarFormAlerta() {
   if (!a.cidade) { $('fa-erro').textContent = 'Informe a cidade.'; return; }
   if (a.max != null && a.max < a.min) { $('fa-erro').textContent = 'O valor "Até" precisa ser maior que o "De".'; return; }
   const payload = { nome: a.nome || nomeSugerido(), estado: a.estado, cidade: a.cidade, bairros: a.bairros, valor_min: a.min, valor_max: a.max };
+  // só mexe na coluna "criterios" quando há critério novo ou o alerta tinha e agora não tem mais
+  const crit = critParaSalvar(a.crit);
+  if (crit || a.tinhaCrit) payload.criterios = crit;
   const r = a.id ? await sb.from('filtros').update(payload).eq('id', a.id) : await sb.from('filtros').insert({ ...payload, ativo: true });
   if (r.error) { $('fa-erro').textContent = 'Erro ao salvar: ' + r.error.message; return; }
   fecharModal();
@@ -1225,17 +1314,36 @@ async function apagarCalc() {
 }
 
 // ---------------- Notificações no Telegram ----------------
-function abrirNotificacoes() {
+// código de uso único do QR Code: 32 caracteres aleatórios, vale 15 minutos e é apagado
+// no instante em que a conexão é feita. O link nunca leva o identificador da conta.
+function gerarCodigoVinculo() {
+  const a = new Uint8Array(16);
+  (window.crypto || globalThis.crypto).getRandomValues(a);
+  return Array.from(a, b => b.toString(16).padStart(2, '0')).join('');
+}
+async function prepararVinculo() {
+  const codigo = gerarCodigoVinculo();
+  const expira = new Date(Date.now() + 15 * 60 * 1000).toISOString();
+  const { error } = await sb.from('perfil_usuario').upsert({ vinculo_token: codigo, vinculo_expira: expira }, { onConflict: 'user_id' });
+  return error ? { erro: error.message } : { codigo };
+}
+
+async function abrirNotificacoes() {
   $('menu-conta').classList.add('oculto');
   const p = S.perfil || {}, conectado = !!p.telegram_chat_id;
   const modo = p.lembrete_vespera || 'favoritos';
+  const formato = p.formato_aviso === 'resumo' ? 'resumo' : 'individual';
+  let vinc = null;
+  if (!conectado && !TELEGRAM_BOT_USERNAME.startsWith('COLE_AQUI') && S.user) vinc = await prepararVinculo();
   let con;
   if (conectado) {
     con = '<div class="conectado"><span>✓ Conectado ao Telegram</span><button class="btn btn-texto" style="color:var(--verde);text-decoration:underline;font-weight:400" data-acao="tg-desconectar">Desconectar</button></div>';
-  } else if (!TELEGRAM_BOT_USERNAME.startsWith('COLE_AQUI') && S.user) {
-    const link = 'https://t.me/' + TELEGRAM_BOT_USERNAME + '?start=' + S.user.id;
+  } else if (vinc && vinc.erro) {
+    con = '<p class="caixa-cinza neg" style="margin:0">Não consegui preparar a conexão: ' + esc(vinc.erro) + '. Use o campo abaixo enquanto isso.</p>';
+  } else if (vinc) {
+    const link = 'https://t.me/' + TELEGRAM_BOT_USERNAME + '?start=' + vinc.codigo;
     con = '<div class="qr-linha"><img alt="QR Code para conectar no Telegram" width="150" height="150" src="https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=' + encodeURIComponent(link) + '">'
-      + '<div style="flex:1 1 200px;display:flex;flex-direction:column;gap:10px"><p style="margin:0;font-size:14px">Escaneie o QR Code ou abra o link no celular e toque em <b>Iniciar</b>. Esta janela atualiza sozinha quando a conexão for confirmada.</p>'
+      + '<div style="flex:1 1 200px;display:flex;flex-direction:column;gap:10px"><p style="margin:0;font-size:14px">Escaneie o QR Code ou abra o link no celular e toque em <b>Iniciar</b>. Esta janela atualiza sozinha quando a conexão for confirmada. O QR Code vale por 15 minutos e só funciona uma vez.</p>'
       + '<a class="btn btn-pri" href="' + link + '" target="_blank" rel="noopener">Abrir no Telegram</a></div></div>';
   } else {
     con = '<p class="caixa-cinza" style="margin:0">Falta configurar o nome do bot no painel (TELEGRAM_BOT_USERNAME). Enquanto isso, use o campo abaixo.</p>';
@@ -1248,7 +1356,11 @@ function abrirNotificacoes() {
     + '<label class="pref"><input type="checkbox" id="pf-mud"' + (p.avisar_mudanca !== false ? ' checked' : '') + '><span><b>Mudança de preço ou de praça</b><span>Por exemplo, quando não vende no 1º leilão e passa para o 2º com lance menor.</span></span></label>'
     + '<div class="pref" style="border:none"><input type="checkbox" id="pf-vesp"' + (modo !== 'nao' ? ' checked' : '') + '><span style="flex:1"><b>Lembrete na véspera do leilão</b><span>Chega na busca das 20h do dia anterior.</span>'
     + '<label class="campo" style="margin-top:8px;flex-direction:row;align-items:center;gap:10px">Para<select id="pf-vesp-modo"><option value="favoritos"' + (modo !== 'todos' ? ' selected' : '') + '>Só os favoritos</option><option value="todos"' + (modo === 'todos' ? ' selected' : '') + '>Todos os meus imóveis</option></select></label></span></div>'
-    + '</fieldset><p class="ajuda">Favoritos aparecem com ⭐ no começo da mensagem e chegam primeiro.</p></div>'
+    + '</fieldset>'
+    + '<fieldset><legend>Como receber</legend>'
+    + '<label class="opcao' + (formato === 'individual' ? ' ativa' : '') + '"><input type="radio" name="formato" value="individual" data-acao="pf-formato"' + (formato === 'individual' ? ' checked' : '') + '><span><b>Uma mensagem por aviso</b><span>Bom para poucos alertas. Chega assim que a busca encontra.</span></span></label>'
+    + '<label class="opcao' + (formato === 'resumo' ? ' ativa' : '') + '"><input type="radio" name="formato" value="resumo" data-acao="pf-formato"' + (formato === 'resumo' ? ' checked' : '') + '><span><b>Resumo único às 20h</b><span>Junta tudo do dia numa mensagem só. Lembretes de véspera continuam separados.</span></span></label>'
+    + '</fieldset><p class="ajuda">Favoritos aparecem com ⭐ e chegam primeiro, nos dois formatos.</p></div>'
     + '<div class="modal-rodape"><button class="btn btn-sec btn-lg" data-acao="fechar-modal">Cancelar</button><button class="btn btn-pri btn-lg" data-acao="pf-salvar">Salvar preferências</button></div>');
   if (!conectado && S.user) iniciarPollTelegram();
 }
@@ -1304,6 +1416,20 @@ document.addEventListener('click', async (e) => {
     case 'fa-faixa': { lerFormAlerta(); const fx = FAIXAS[Number(el.dataset.i)]; formAlerta.min = fx[1]; formAlerta.max = fx[2]; desenharFormAlerta(); break; }
     case 'fa-tirar-bairro': lerFormAlerta(); formAlerta.bairros.splice(Number(el.dataset.i), 1); desenharFormAlerta(); break;
     case 'fa-salvar': await salvarFormAlerta(); break;
+    case 'fa-avancado': lerFormAlerta(); formAlerta.avancado = true; desenharFormAlerta(); break;
+    case 'fa-crit': {
+      lerFormAlerta();
+      const g = el.dataset.grupo, v = el.dataset.valor, c = formAlerta.crit;
+      if (g === 'tipo') { const i = c.tipos.indexOf(v); i >= 0 ? c.tipos.splice(i, 1) : c.tipos.push(v); }
+      else c[g] = Number(v);
+      desenharFormAlerta(); break;
+    }
+    case 'mf-salvar-alerta': {
+      const mf = S.mf;
+      const crit = { tipos: [...mf.tipos], quartos: mf.quartos, desconto: mf.desconto, area: mf.area, modalidades: [...mf.modalidades], financiamento: mf.financiamento };
+      abrirFormAlerta(null, { crit, filtro: S.filtros.find(x => x.nome === S.origem) || null });
+      break;
+    }
     // imóveis
     case 'aba': S.aba = el.dataset.aba; S.sel.clear(); S.destaque = null; render(); break;
     case 'mais-filtros': S.mfAberto = !S.mfAberto; render(); break;
@@ -1343,7 +1469,8 @@ document.addEventListener('click', async (e) => {
     case 'tg-manual': { const v = $('tg-manual').value.trim(); if (!v) return; if (await salvarPerfil({ telegram_chat_id: v }, 'Telegram conectado.')) fecharModal(); break; }
     case 'pf-salvar': {
       const vesp = $('pf-vesp').checked ? $('pf-vesp-modo').value : 'nao';
-      if (await salvarPerfil({ avisar_novo: $('pf-novo').checked, avisar_mudanca: $('pf-mud').checked, lembrete_vespera: vesp }, 'Preferências salvas.')) fecharModal();
+      const formato = (document.querySelector('input[name="formato"]:checked') || {}).value === 'resumo' ? 'resumo' : 'individual';
+      if (await salvarPerfil({ avisar_novo: $('pf-novo').checked, avisar_mudanca: $('pf-mud').checked, lembrete_vespera: vesp, formato_aviso: formato }, 'Preferências salvas.')) fecharModal();
       break;
     }
   }
@@ -1353,6 +1480,10 @@ document.addEventListener('change', (e) => {
   const t = e.target;
   if (t.dataset.acao === 'sel') { t.checked ? S.sel.add(t.dataset.id) : S.sel.delete(t.dataset.id); render(); return; }
   if (t.dataset.acao === 'sel-grupo') { t.dataset.ids.split(',').forEach(id => t.checked ? S.sel.add(id) : S.sel.delete(id)); render(); return; }
+  if (t.dataset.acao === 'pf-formato') {
+    document.querySelectorAll('.modal .opcao').forEach(o => o.classList.toggle('ativa', o.querySelector('input').checked));
+    return;
+  }
   if (t.dataset.acao === 'pausa-modo') {
     pausaModo.excluir = t.value === 'excluir';
     document.querySelectorAll('.opcao').forEach(o => o.classList.toggle('ativa', o.querySelector('input').checked));
@@ -1371,6 +1502,13 @@ document.addEventListener('change', (e) => {
     lerFormAlerta(); if (!formAlerta.nomeManual) { $('fa-nome').value = nomeSugerido(); }
     document.querySelectorAll('[data-acao="fa-faixa"]').forEach(b => { const fx = FAIXAS[Number(b.dataset.i)]; b.setAttribute('aria-pressed', String(fx[1] === formAlerta.min && fx[2] === formAlerta.max)); });
   }
+  if (t.dataset.faMod) {
+    const c = formAlerta.crit, v = t.dataset.faMod;
+    c.modalidades = MODALIDADES_TODAS.filter(m => m === v ? t.checked : c.modalidades.includes(m));
+    return;
+  }
+  if (t.id === 'fa-fin') { formAlerta.crit.financiamento = t.checked; return; }
+  if (t.id === 'fa-area') { formAlerta.crit.area = t.value; return; }
   if (t.id === 'fa-cidade') { lerFormAlerta(); if (!formAlerta.nomeManual) $('fa-nome').value = nomeSugerido(); }
   if (t.dataset.calc) { const v = parseBR(t.value); if (!['comissao', 'itbi', 'pctAluguel'].includes(t.dataset.calc) && v != null) t.value = numBR(v); calcAtual.d[t.dataset.calc] = t.value; atualizarCalc(); }
 });
