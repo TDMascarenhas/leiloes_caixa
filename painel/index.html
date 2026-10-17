@@ -460,8 +460,16 @@ function proximaBusca() {
   const prox = HORARIOS_BUSCA.find(x => x > h);
   return prox != null ? 'às ' + prox + 'h' : 'amanhã às ' + HORARIOS_BUSCA[0] + 'h';
 }
+// Para o mapa só vale rua e número: apto, torre, bloco, lote, quadra e vagas não ajudam o Google
+// a achar o prédio e podem levar o pino pra rua. Sem número reconhecível, mantém o endereço inteiro.
+function enderecoParaMapa(endereco) {
+  const t = String(endereco || '').trim();
+  const m = t.match(/^(.*?,\s*(?:N[ºo°]?\.?\s*)?(?:S\/N|\d+[A-Za-z]?))(?![\w])/i);
+  return m ? m[1].trim() : t;
+}
 function linkMapa(im) {
-  const partes = [im.empreendimento, im.endereco, im.bairro, (im.cidade || '') + ' - ' + (im.uf || '')].filter(Boolean);
+  // o CEP entra só como número, sem a palavra "CEP", e somente quando a Caixa informa
+  const partes = [im.empreendimento, enderecoParaMapa(im.endereco), im.bairro, (im.cidade || '') + ' - ' + (im.uf || ''), im.cep].filter(Boolean);
   return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(partes.join(', '));
 }
 function criteriosTxt(c) {
