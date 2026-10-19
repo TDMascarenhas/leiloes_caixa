@@ -318,6 +318,7 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
           </button>
           <div class="menu-conta oculto" id="menu-conta">
+            <button data-acao="abrir-perfil">Meu nome</button>
             <button data-acao="abrir-notificacoes">Notificações no Telegram</button>
             <button data-acao="sair">Sair</button>
           </div>
@@ -351,10 +352,8 @@ const SUPABASE_URL_FIXO = 'https://dapyrjozckobyrbbwlmb.supabase.co';
 const SUPABASE_ANON_KEY_FIXO = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRhcHlyam96Y2tvYnlyYmJ3bG1iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk2NDE3NzQsImV4cCI6MjEwNTIxNzc3NH0.jRz1kpBHpQL5V2XBgbNQUqZuj0leN87D9FpPpmMAt4M';
 // @username do bot no Telegram (sem o @), dado pelo BotFather — usado no QR Code
 const TELEGRAM_BOT_USERNAME = 'Radar_de_Leiloes_Caixa_bot';
-const NOMES_USUARIOS = {
-  'tiago.d.mascarenhas@gmail.com': 'Tiago Mascarenhas',
-  'lsboissard@gmail.com': 'Leonardo Boissard',
-};
+// O nome exibido em "Olá, ..." fica no perfil de cada pessoa (coluna perfil_usuario.nome), no Supabase;
+// quem ainda não definiu o nome aparece pelo e-mail. Cada um muda o próprio nome no menu da conta.
 const HORARIOS_BUSCA = [10, 15, 20];          // horário de Brasília
 // O GitHub atrasa as buscas agendadas de vez em quando. Só vira aviso se uma busca
 // prevista passar disso sem ter rodado.
@@ -672,7 +671,22 @@ async function carregarTudo() {
 // =====================================================================
 // Renderização
 // =====================================================================
+// nome exibido: o do perfil; sem nome definido, o e-mail da própria pessoa logada (só ela vê)
+function nomeDeExibicao() {
+  const n = String((S.perfil && S.perfil.nome) || '').trim();
+  return n || S.email || '';
+}
+function atualizarSaudacao() {
+  const nome = nomeDeExibicao();
+  if (!nome || !$('nome-conta')) return;
+  const curto = nome.includes('@') ? nome.split('@')[0] : nome.split(/\s+/)[0];
+  $('nome-conta').textContent = curto;
+  $('avatar').textContent = nome.split(/[\s@._-]+/).filter(Boolean).slice(0, 2).map(p => p[0].toUpperCase()).join('');
+  $('btn-conta').setAttribute('aria-label', 'Menu da conta de ' + nome);
+}
+
 function render() {
+  atualizarSaudacao();
   renderStatus();
   ['alertas', 'imoveis', 'agenda'].forEach(v => $('view-' + v).classList.toggle('oculto', S.view !== v));
   document.querySelectorAll('[data-acao="ir"]').forEach(b => {
@@ -1364,6 +1378,16 @@ async function prepararVinculo() {
   return error ? { erro: error.message } : { codigo };
 }
 
+function abrirPerfil() {
+  $('menu-conta').classList.add('oculto');
+  abrirModal(cabModal('Meu nome')
+    + '<div class="modal-corpo"><label class="campo">Como você quer ser chamado'
+    + '<input id="perfil-nome" maxlength="60" value="' + esc((S.perfil && S.perfil.nome) || '') + '" placeholder="ex: Maria Souza"></label>'
+    + '<p class="ajuda">Aparece no topo da tela ("Olá, ..."). Só você vê. Se deixar em branco, aparece o seu e-mail.</p></div>'
+    + '<div class="modal-rodape"><button class="btn btn-sec btn-lg" data-acao="fechar-modal">Cancelar</button>'
+    + '<button class="btn btn-pri btn-lg" data-acao="perfil-salvar">Salvar</button></div>');
+}
+
 async function abrirNotificacoes() {
   $('menu-conta').classList.add('oculto');
   if (S.perfilErro) {   // não dá pra saber se já está conectado: não mostra QR Code nem diz que não está
@@ -1444,6 +1468,12 @@ document.addEventListener('click', async (e) => {
     case 'sair': await sb.auth.signOut(); location.hash = ''; location.reload(); break;
     case 'ocultar-tg': localStorage.setItem('radar_ocultar_tg', '1'); render(); break;
     case 'abrir-notificacoes': abrirNotificacoes(); break;
+    case 'abrir-perfil': abrirPerfil(); break;
+    case 'perfil-salvar': {
+      const nome = $('perfil-nome').value.trim();
+      if (await salvarPerfil({ nome: nome || null }, nome ? 'Nome salvo.' : 'Nome removido.')) fecharModal();
+      break;
+    }
     case 'fechar-modal': fecharModal(); break;
     case 'recarregar': await carregarTudo(); break;
     case 'tg-tentar-de-novo': await carregarTudo(); abrirNotificacoes(); break;
@@ -1605,12 +1635,8 @@ function mostrarLogin(msg) {
 }
 async function mostrarApp(user) {
   S.user = user; S.email = user.email || '';
-  const nome = NOMES_USUARIOS[S.email] || S.email;
   $('btn-entrar').disabled = true; $('btn-entrar').textContent = 'Entrando...';
-  await carregarTudo();
-  $('nome-conta').textContent = nome.split(' ')[0];
-  $('avatar').textContent = nome.split(/[\s@.]+/).filter(Boolean).slice(0, 2).map(p => p[0].toUpperCase()).join('');
-  $('btn-conta').setAttribute('aria-label', 'Menu da conta de ' + nome);
+  await carregarTudo();   // o render() já preenche o nome do topo
   $('login-screen').classList.add('oculto');
   $('app').classList.remove('oculto');
   tratarLink();
