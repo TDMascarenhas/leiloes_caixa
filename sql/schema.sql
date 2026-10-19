@@ -407,3 +407,13 @@ grant select, insert, update, delete on public.custo_imovel      to service_role
 grant select, insert, update, delete on public.lembrete_enviado  to service_role;
 grant select, insert, update, delete on public.status_execucao   to service_role;
 grant select, insert, update, delete on public.aviso_pendente    to service_role;
+
+-- =====================================================================
+-- v6 (também disponível em migracao_v6.sql)
+-- =====================================================================
+-- Migração v6: nome de exibição de cada pessoa ("Olá, ..." no topo do painel).
+-- Substitui a lista de e-mails e nomes que ficava escrita no código do painel (que é público).
+-- Rode UMA VEZ no SQL Editor do Supabase. É seguro rodar de novo.
+-- Rode ANTES de atualizar o painel.
+
+alter table perfil_usuario add column if not exists nome text;
