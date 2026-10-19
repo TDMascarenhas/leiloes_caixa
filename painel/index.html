@@ -622,22 +622,43 @@ function estatAlerta(f) {
 // =====================================================================
 // Carregamento
 // =====================================================================
+// Erros que costumam passar sozinhos (relógio entre servidores, rede, servidor ocupado).
+// Permissão negada, tabela inexistente etc. não passam: nesses o painel avisa na hora, sem esperar.
+function erroTemporario(r) {
+  const e = r && r.error;
+  if (!e) return false;
+  const msg = String(e.message || '') + ' ' + String(e.details || '') + ' ' + String(e.code || '');
+  if (/permission denied|42501|row-level security|does not exist|42P01|42703/i.test(msg)) return false;
+  return r.status === 0 || r.status >= 500 || /jwt|fetch|network|timeout|timed out|load failed/i.test(msg);
+}
+// roda a leitura e, se o erro for do tipo temporário, tenta de novo (até 2 vezes, com pausa)
+async function lerComRetry(fabrica) {
+  const esperas = window.ESPERAS_RETRY_MS || [1500, 3000];
+  let r = await fabrica();
+  for (let i = 0; i < esperas.length && erroTemporario(r); i++) {
+    console.warn('Leitura falhou (' + (r.error.message || r.error.code) + '); tentando de novo em ' + esperas[i] + ' ms');
+    await new Promise(res => setTimeout(res, esperas[i]));
+    r = await fabrica();
+  }
+  return r;
+}
+
 async function carregarTudo() {
   const [rf, ri, rp, rc, rs] = await Promise.all([
-    sb.from('filtros').select('*').order('criado_em', { ascending: false }),
-    sb.from('meus_imoveis').select('*').order('atualizado_em', { ascending: false }).limit(3000),
-    sb.from('perfil_usuario').select('*').maybeSingle(),
-    sb.from('custo_imovel').select('*'),
-    sb.from('status_execucao').select('*').order('executado_em', { ascending: false }).limit(12),
+    lerComRetry(() => sb.from('filtros').select('*').order('criado_em', { ascending: false })),
+    lerComRetry(() => sb.from('meus_imoveis').select('*').order('atualizado_em', { ascending: false }).limit(3000)),
+    lerComRetry(() => sb.from('perfil_usuario').select('*').maybeSingle()),
+    lerComRetry(() => sb.from('custo_imovel').select('*')),
+    lerComRetry(() => sb.from('status_execucao').select('*').order('executado_em', { ascending: false }).limit(12)),
   ]);
-  if (rf.error) console.error(rf.error);
-  if (ri.error) console.error(ri.error);
-  S.filtros = rf.data || [];
-  S.imoveis = (ri.data || []).map(im => ({ ...im, filtros_correspondentes: im.filtros_correspondentes || [], fatos: im.fatos || {} }));
-  S.perfil = rp.error ? null : (rp.data || null);
-  S.custos = {};
-  (rc.error ? [] : (rc.data || [])).forEach(c => { S.custos[c.imovel_id] = c; });
-  S.status = rs.error ? [] : (rs.data || []);
+  // Leitura que falhou NÃO apaga o que já estava na tela, e o painel não afirma que "não há nada":
+  // marca a falha pra mostrar um aviso em vez de um estado vazio enganoso.
+  S.filtrosErro = !!rf.error; S.imoveisErro = !!ri.error; S.perfilErro = !!rp.error;
+  if (!rf.error) S.filtros = rf.data || [];
+  if (!ri.error) S.imoveis = (ri.data || []).map(im => ({ ...im, filtros_correspondentes: im.filtros_correspondentes || [], fatos: im.fatos || {} }));
+  if (!rp.error) S.perfil = rp.data || null;
+  if (!rc.error) { S.custos = {}; (rc.data || []).forEach(c => { S.custos[c.imovel_id] = c; }); }
+  if (!rs.error) S.status = rs.data || [];
   // não esconder falha de leitura: se uma tabela não carrega, o painel avisa qual
   S.erros = [];
   [['filtros', rf], ['imóveis', ri], ['perfil_usuario', rp], ['custo_imovel', rc], ['status_execucao', rs]].forEach(([nome, r]) => {
@@ -681,8 +702,12 @@ function renderStatus() {
 
   let faixas = '';
   if (S.erros && S.erros.length) {
+    const semPermissao = S.erros.some(e => /permission denied|42501/i.test(e));
+    const dica = semPermissao
+      ? 'Falta liberar a tabela no Supabase (arquivo liberar_acesso.sql).'
+      : 'Costuma passar sozinho: tente de novo. Se continuar, avise o administrador do sistema.';
     faixas += '<section class="faixa faixa-aviso" role="alert">' + ICONES.aviso + '<p><b>Parte dos dados não carregou.</b> ' + esc(S.erros.join(' | '))
-      + '. Se a mensagem fala em "permission denied", falta liberar a tabela no Supabase (arquivo liberar_acesso.sql).</p></section>';
+      + '. ' + dica + '</p><button class="btn btn-sec" data-acao="recarregar">Tentar de novo</button></section>';
   }
   if (atrasada) {
     const desde = ultima ? ' desde ' + hojeOuOntem(ultima) : '';
@@ -705,7 +730,7 @@ function renderAlertas() {
   const comAlerta = visiveis().filter(im => im.filtros_correspondentes.length);
   const novos = comAlerta.filter(im => ehRecente(im.primeira_vez_visto)).length;
   let h = '';
-  if (!(S.perfil && S.perfil.telegram_chat_id) && localStorage.getItem('radar_ocultar_tg') !== '1') {
+  if (!(S.perfil && S.perfil.telegram_chat_id) && !S.perfilErro && localStorage.getItem('radar_ocultar_tg') !== '1') {
     h += '<section class="faixa faixa-info">' + ICONES.telegram
       + '<p>Receba no Telegram os imóveis novos, as mudanças de leilão e lembretes na véspera.</p>'
       + '<div style="display:flex;gap:8px"><button class="btn btn-pri" data-acao="abrir-notificacoes">Conectar Telegram</button>'
@@ -715,11 +740,13 @@ function renderAlertas() {
     ? ativos + (ativos === 1 ? ' alerta ativo' : ' alertas ativos') + (pausados ? ' e ' + pausados + ' pausado' + (pausados > 1 ? 's' : '') : '')
       + '. ' + comAlerta.length + (comAlerta.length === 1 ? ' imóvel encontrado' : ' imóveis encontrados')
       + (novos ? ', ' + novos + (novos === 1 ? ' novo' : ' novos') + ' nos últimos 2 dias.' : '.')
-    : 'Crie um alerta e o sistema passa a buscar na lista oficial da Caixa 3 vezes por dia.';
+    : (S.filtrosErro ? 'Não foi possível carregar os seus alertas agora.' : 'Crie um alerta e o sistema passa a buscar na lista oficial da Caixa 3 vezes por dia.');
   h += '<div class="cabeca-pag"><div><h1 class="titulo-pag">Meus alertas</h1><p class="sub-pag">' + esc(resumo) + '</p></div>'
     + '<button class="btn btn-pri btn-lg" data-acao="novo-alerta">' + ICONES.mais + 'Novo alerta</button></div>';
   if (!S.filtros.length) {
-    h += '<div class="vazio"><h3>Nenhum alerta ainda</h3><p>Informe estado, cidade, bairros (opcional) e faixa de valor.</p></div>';
+    h += S.filtrosErro
+      ? '<div class="vazio"><h3>Não consegui carregar os seus alertas</h3><p>Isso costuma passar sozinho. <button class="btn btn-texto" data-acao="recarregar">Tentar de novo</button></p></div>'
+      : '<div class="vazio"><h3>Nenhum alerta ainda</h3><p>Informe estado, cidade, bairros (opcional) e faixa de valor.</p></div>';
   } else {
     h += '<div class="grade-alertas">' + S.filtros.map(cardAlerta).join('') + '</div>';
   }
@@ -786,6 +813,7 @@ function renderImoveis() {
 
 function vazioImoveis() {
   if (S.aba === 'fav') return '<div class="vazio"><h3>Nenhum favorito</h3><p>Use "Favoritar" nos imóveis que quer acompanhar de perto.</p></div>';
+  if (S.imoveisErro && !S.imoveis.length) return '<div class="vazio"><h3>Não consegui carregar os imóveis</h3><p>Isso costuma passar sozinho. <button class="btn btn-texto" data-acao="recarregar">Tentar de novo</button></p></div>';
   if (!S.imoveis.length) return '<div class="vazio"><h3>Nada por aqui ainda</h3><p>Assim que a busca encontrar algo nos seus alertas, aparece aqui.</p></div>';
   return '<div class="vazio"><h3>Nenhum imóvel com esses filtros</h3><p><button class="btn btn-texto" data-acao="limpar-tudo">Limpar filtros</button></p></div>';
 }
@@ -1338,6 +1366,13 @@ async function prepararVinculo() {
 
 async function abrirNotificacoes() {
   $('menu-conta').classList.add('oculto');
+  if (S.perfilErro) {   // não dá pra saber se já está conectado: não mostra QR Code nem diz que não está
+    abrirModal(cabModal('Notificações no Telegram')
+      + '<div class="modal-corpo"><p class="caixa-cinza neg" style="margin:0">Não consegui ler a sua conexão com o Telegram agora. Isso costuma passar sozinho: tente de novo.</p></div>'
+      + '<div class="modal-rodape"><button class="btn btn-sec btn-lg" data-acao="fechar-modal">Fechar</button>'
+      + '<button class="btn btn-pri btn-lg" data-acao="tg-tentar-de-novo">Tentar de novo</button></div>');
+    return;
+  }
   const p = S.perfil || {}, conectado = !!p.telegram_chat_id;
   const modo = p.lembrete_vespera || 'favoritos';
   const formato = p.formato_aviso === 'resumo' ? 'resumo' : 'individual';
@@ -1410,6 +1445,8 @@ document.addEventListener('click', async (e) => {
     case 'ocultar-tg': localStorage.setItem('radar_ocultar_tg', '1'); render(); break;
     case 'abrir-notificacoes': abrirNotificacoes(); break;
     case 'fechar-modal': fecharModal(); break;
+    case 'recarregar': await carregarTudo(); break;
+    case 'tg-tentar-de-novo': await carregarTudo(); abrirNotificacoes(); break;
     // alertas
     case 'novo-alerta': abrirFormAlerta(null); break;
     case 'editar-alerta': abrirFormAlerta(id); break;
