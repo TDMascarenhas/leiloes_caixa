@@ -69,7 +69,8 @@ chave `service_role` só existe nos Secrets do GitHub e da Edge Function.
     ├── migracao_v3.sql             # redesign, calculadora, resumo de status
     ├── liberar_acesso.sql          # liberações de acesso (ver "Problemas comuns")
     ├── migracao_v4.sql             # filtros avançados, resumo das 20h, código de uso único
-    └── migracao_v5.sql             # CEP do imóvel
+    ├── migracao_v5.sql             # CEP do imóvel
+    └── migracao_v6.sql             # nome de exibição de cada pessoa
 ```
 
 ## Usando o painel
@@ -92,6 +93,7 @@ chave `service_role` só existe nos Secrets do GitHub e da Edge Function.
   sobre o capital investido). Os percentuais vêm de exemplo: confirme na prefeitura e no edital.
 - **Ver no mapa:** envia nome do empreendimento, rua e número, bairro, cidade/UF e CEP
   (quando a Caixa informa). Apto, torre e bloco ficam de fora para o Google achar o prédio.
+- **Menu da conta:** *Meu nome* (como você quer ser chamado), *Notificações no Telegram* e *Sair*.
 - **Faixa de aviso no topo:** aparece se uma busca prevista passou de 2 horas sem rodar ou se
   a última falhou. Entre duas buscas de horário fixo não há alarme.
 
@@ -137,7 +139,10 @@ No começo do script de `painel/index.html`, ajuste estas constantes:
 | `SUPABASE_URL_FIXO` | a *Project URL* |
 | `SUPABASE_ANON_KEY_FIXO` | a chave *anon* (pública; **nunca** a `service_role`) |
 | `TELEGRAM_BOT_USERNAME` | o @ do bot, sem o `@` (passo 4) |
-| `NOMES_USUARIOS` | e-mail → nome exibido ("Olá, Fulano"); e-mail ausente aparece como e-mail |
+
+O nome que aparece em "Olá, ..." **não fica no código** (o painel é público): cada pessoa o define
+no menu da conta → **Meu nome**, e ele é guardado no perfil, no Supabase. Sem nome definido,
+aparece o e-mail da própria pessoa.
 
 ### 3. GitHub
 
@@ -196,8 +201,8 @@ log diz "Nenhum filtro ativo": é esperado. Entre no painel, crie um alerta e ro
 - **Reler a página de todos os imóveis:** *Run workflow* marcando "Reler a página de detalhe
   de TODOS os imóveis". Use uma vez depois de uma melhoria na leitura (nome do empreendimento,
   CEP...). Não gera avisos para quem já estava salvo.
-- **Novo usuário:** *Authentication → Users → Add user*. Ele entra no mesmo link e cadastra
-  os próprios alertas.
+- **Novo usuário:** *Authentication → Users → Add user*. Ele entra no mesmo link, define o
+  nome em *Meu nome* e cadastra os próprios alertas.
 - **Ordem ao atualizar:** (1) rodar a migração SQL nova, (2) atualizar a Edge Function se
   mudou, (3) editar `scripts/buscar_imoveis.py` e `painel/index.html` no GitHub, (4)
   **Ctrl+F5** no painel. O banco vem primeiro: robô ou painel novos sem a coluna nova
@@ -216,6 +221,7 @@ Rode no SQL Editor, na ordem, só o que ainda não rodou (todos podem rodar de n
 | `liberar_acesso.sql` | liberações de acesso (ver abaixo) |
 | `migracao_v4.sql` | filtros avançados, resumo único, código de uso único no QR Code |
 | `migracao_v5.sql` | CEP (recria a view `meus_imoveis`) |
+| `migracao_v6.sql` | nome de exibição de cada pessoa |
 
 ## Problemas comuns
 
