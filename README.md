@@ -1,199 +1,245 @@
 # Radar de Leilões — Caixa
 
-Sistema que monitora a lista pública e oficial de imóveis da Caixa Econômica
-Federal e avisa quando surge um imóvel que bate em algum dos seus filtros
-salvos (estado, cidade, bairros e faixa de valor de avaliação).
+Sistema que monitora a lista pública e oficial de imóveis da Caixa Econômica Federal e
+avisa quando aparece um imóvel que bate nos seus alertas. Cada pessoa tem o próprio login,
+os próprios alertas, favoritos e avisos no Telegram.
 
-**Nesta fase:** o site já fica no ar, funcional, com login, cadastro de
-filtros e resultados atualizados automaticamente todo dia — **sem Telegram
-ainda**. O aviso por Telegram entra numa etapa seguinte, depois que você
-confirmar que o site está funcionando do jeito que você quer.
+> **Nunca escreva senhas, chaves ou tokens neste repositório** (nem neste README, nem em
+> código, nem em commits). Se o repositório é público, tudo o que estiver nele é público,
+> inclusive no histórico. Segredos ficam só nos *Secrets* do GitHub e do Supabase.
+
+## O que o sistema faz
+
+- **Alertas:** estado, cidade, bairros (opcional), faixa de valor de avaliação e filtros
+  avançados (tipo, quartos, desconto, área, modalidade, financiamento).
+- **Busca automática 3 vezes ao dia** (10h, 15h e 20h, horário de Brasília), sobre as listas
+  oficiais da Caixa.
+- **Painel web** com login: alertas, imóveis (com 1º e 2º leilão, edital, mapa), favoritos,
+  "sem interesse", seleção em lote, agenda de leilões e calculadora de custo real.
+- **Avisos no Telegram:** imóvel novo, mudança de preço ou de praça, lembrete na véspera do
+  leilão e, se você preferir, um resumo único às 20h. Favoritos aparecem com ⭐.
+- **Avisos de problema** para o administrador (busca falhou, incompleta ou voltou ao normal).
 
 ## Como funciona
 
-1. Você cadastra "alertas" (filtros) no painel web, logado com seu e-mail e senha.
-2. Uma vez por dia, o GitHub Actions roda `scripts/buscar_imoveis.py`, que:
-   - baixa o CSV oficial de cada UF que aparece em algum filtro ativo;
-   - aplica os filtros sobre os imóveis;
-   - busca a página de detalhe (1º/2º leilão, matrícula, edital...) só dos
-     imóveis novos ou que mudaram de modalidade/preço desde a última vez —
-     os que não mudaram reaproveitam o que já tinha, sem sobrecarregar o
-     site da Caixa;
-   - grava tudo no Supabase.
-3. O painel web lê o Supabase direto do navegador — é onde você cadastra
-   alertas, vê os resultados (agrupados por bairro, com situação de cada
-   leilão, riscando o que já passou) e marca favoritos.
+```
+Caixa (lista CSV + página de cada imóvel)
+        │   3x ao dia
+        ▼
+GitHub Actions ── scripts/buscar_imoveis.py ──▶ Supabase (banco + login)
+        │                                           ▲            │
+        └── avisos ──▶ Telegram                     │            ▼
+                          │                         │      Painel (GitHub Pages)
+                          └── /start ──▶ Edge Function telegram-webhook
+```
 
----
+| Peça | Onde roda | Arquivo |
+|---|---|---|
+| Robô de busca e avisos | GitHub Actions (agendado) | `scripts/buscar_imoveis.py`, `.github/workflows/atualizar-imoveis.yml` |
+| Banco e login | Supabase | `sql/*.sql` |
+| Painel | GitHub Pages (arquivo único, no navegador) | `painel/index.html` |
+| Conexão do Telegram na hora | Supabase Edge Function | `supabase/functions/telegram-webhook/index.ts` |
 
-## Passo a passo pra colocar no ar
+**O robô**, a cada execução: baixa o CSV de cada estado que aparece em algum alerta ativo,
+aplica os alertas de todos os usuários, lê a página de detalhe (leilões, matrícula, edital,
+nome do empreendimento, CEP) **só dos imóveis novos ou que mudaram de preço/modalidade**, grava
+no Supabase e envia os avisos. A cada rodada ele refaz, para cada alerta, a lista de imóveis
+que batem: o que deixou de bater some sozinho.
 
-### 1. Criar o projeto no Supabase
+**Segurança dos dados:** o banco usa RLS: cada pessoa só lê e grava as próprias linhas
+(alertas, favoritos, perfil, cálculos). A tabela `imoveis` é compartilhada (dado público da
+Caixa). A chave `anon` que fica no painel é pública por natureza e não lê nada sem login. A
+chave `service_role` só existe nos Secrets do GitHub e da Edge Function.
 
-1. Acesse [supabase.com](https://supabase.com) e crie uma conta (dá pra
-   entrar com GitHub).
-2. **New Project** → escolha um nome (ex: `radar-leiloes`), uma senha de
-   banco (guarde essa senha em local seguro, mas ela não é usada em nenhum
-   lugar do nosso sistema depois de criada) e a região mais próxima
-   (`South America (São Paulo)`).
-3. Espere o projeto terminar de provisionar (1-2 minutos).
-
-### 2. Rodar o schema do banco
-
-1. No menu lateral do projeto, clique em **SQL Editor**.
-2. **New query**.
-3. Abra o arquivo `sql/schema.sql` (está no pacote que te entreguei), copie
-   todo o conteúdo, cole no editor e clique em **Run**.
-4. Deve aparecer "Success. No rows returned" — isso confirma que as tabelas
-   `filtros`, `imoveis` e `historico` foram criadas.
-
-### 3. Criar seu usuário de login
-
-1. No menu lateral, **Authentication** → **Users** → **Add user** →
-   **Create new user**.
-2. **E-mail**: use o seu e-mail de verdade (recomendado, caso precise
-   recuperar a senha depois).
-3. **Password**: `99554829`
-4. Marque **Auto Confirm User** (senão ele espera uma confirmação por
-   e-mail que não vai chegar, já que não configuramos envio de e-mail).
-5. **Create user**.
-
-Guarde esse e-mail — é o que você vai digitar no painel pra entrar (junto
-com a senha `99554829`).
-
-### 4. Pegar as chaves do projeto
-
-No menu lateral, **Project Settings** (ícone de engrenagem) → **API**.
-Anote três valores, você vai precisar deles no passo 6 e no primeiro login:
-
-- **Project URL** — algo como `https://xxxxxxxxxxxx.supabase.co`
-- **anon public** key — uma chave longa, começa com `eyJ...` — vai no
-  navegador, é pública por natureza (protegida pelo RLS que já vem no
-  schema: sem login, ela não lê nem escreve nada)
-- **service_role** key — outra chave longa — **essa é secreta**, só vai
-  num Secret do GitHub (passo 6), nunca no navegador nem em nenhum arquivo
-  do repositório
-
-### 5. Subir o código pro GitHub
-
-1. Crie um repositório novo no GitHub (pode ser privado ou público — como
-   os dados de imóvel são públicos por natureza, não tem problema deixar
-   público; se preferir privado, funciona igual).
-2. Suba todos os arquivos do pacote (`sql/`, `scripts/`, `painel/`,
-   `.github/`, `requirements.txt`, `README.md`) mantendo essa mesma
-   estrutura de pastas. Pode ser pela interface web do GitHub
-   ("Add file" → "Upload files", arraste a pasta inteira) ou por linha de
-   comando com `git`, o que for mais confortável pra você.
-
-### 6. Configurar os Secrets
-
-1. No repositório, **Settings** → **Secrets and variables** → **Actions**.
-2. **New repository secret**, duas vezes:
-   - Nome `SUPABASE_URL`, valor a Project URL do passo 4.
-   - Nome `SUPABASE_SERVICE_KEY`, valor a chave `service_role` do passo 4.
-
-### 7. Rodar a primeira busca manualmente
-
-Não precisa esperar o agendamento das 08:15 pra testar:
-
-1. No repositório, aba **Actions**.
-2. Clique no workflow **Atualizar Radar de Leilões Caixa** na lista à
-   esquerda.
-3. Botão **Run workflow** (canto direito) → **Run workflow** de novo pra
-   confirmar.
-4. Acompanhe a execução clicando nela — deve levar de alguns segundos a
-   poucos minutos, dependendo de quantos imóveis baterem nos seus filtros
-   (a primeira vez busca detalhe de todo mundo; nas próximas só de quem for
-   novo ou mudar).
-
-Se der erro, clique na execução falha pra ver o log — a mensagem costuma
-dizer exatamente o que faltou (secret não configurado, erro de rede, etc.).
-
-**Atenção**: como ainda não existe nenhum filtro cadastrado (você vai
-cadastrar no painel, passo 9), essa primeira execução provavelmente só vai
-mostrar "Nenhum filtro ativo cadastrado no Supabase. Nada a fazer." — é
-esperado, não é erro.
-
-### 8. Publicar o painel (GitHub Pages)
-
-1. No repositório, **Settings** → **Pages**.
-2. Em **Source**, escolha **Deploy from a branch**.
-3. Em **Branch**, escolha `main` (ou a branch onde você subiu o código) e
-   pasta **/ (root)** → **Save**.
-4. Espere um minuto e recarregue a página — vai aparecer um link parecido
-   com `https://SEUUSUARIO.github.io/NOMEDOREPO/`.
-5. Como o painel está na pasta `painel/`, o endereço final é:
-   `https://SEUUSUARIO.github.io/NOMEDOREPO/painel/`
-   (repare na barra `/painel/` no final — sem ela, cai numa página em
-   branco ou 404, porque o `index.html` não está na raiz do repositório).
-
-### 9. Primeiro acesso e cadastro de filtros
-
-1. Abra `https://SEUUSUARIO.github.io/NOMEDOREPO/painel/`.
-2. Preencha **URL do projeto Supabase** e **Chave anon** (passo 4) e o
-   **e-mail**/**senha** (`99554829`) do passo 3 → **Entrar**.
-3. A URL e a chave ficam salvas no seu navegador — não precisa digitar de
-   novo nas próximas vezes; a sessão de login também fica salva.
-4. Na aba **Filtros**, cadastre seus alertas (nome, estado, cidade, bairros
-   opcionais, valor mínimo/máximo).
-5. Espere a próxima execução automática (08:15) ou rode manualmente de
-   novo (passo 7) — os resultados aparecem na aba **Resultados**.
-
----
-
-## Estrutura
+## Estrutura do repositório
 
 ```
-caixa-leiloes/
+.
 ├── README.md
 ├── requirements.txt
-├── sql/schema.sql                          # schema completo (projeto novo, do zero)
-├── sql/migracao_multiusuario.sql           # migração pra quem já tinha o schema antigo
-├── scripts/buscar_imoveis.py               # roda todo dia no GitHub Actions
-├── .github/workflows/atualizar-imoveis.yml # agendamento
-└── painel/index.html                       # painel web (login + filtros + resultados + favoritos + descartados)
+├── .github/workflows/atualizar-imoveis.yml   # agendamento (10h, 15h, 20h) e execução manual
+├── scripts/buscar_imoveis.py                 # robô
+├── painel/index.html                         # painel (HTML, CSS e JS num arquivo só)
+├── supabase/functions/telegram-webhook/      # conexão instantânea do Telegram
+│   └── index.ts
+└── sql/
+    ├── schema.sql                  # instalação do zero (inclui tudo abaixo)
+    ├── migracao_multiusuario.sql   # só para quem veio da versão de um usuário
+    ├── adicionar_telegram.sql      # tabela de perfil/Telegram (versões antigas)
+    ├── migracao_v3.sql             # redesign, calculadora, resumo de status
+    ├── liberar_acesso.sql          # liberações de acesso (ver "Problemas comuns")
+    ├── migracao_v4.sql             # filtros avançados, resumo das 20h, código de uso único
+    └── migracao_v5.sql             # CEP do imóvel
 ```
 
-## Multiusuário
+## Usando o painel
 
-Cada pessoa só vê e edita os próprios filtros e resultados — é a mesma
-tabela `imoveis` por trás (dado público da Caixa, compartilhado, sem
-sentido duplicar), mas filtros, favoritos e "descartados" são isolados por
-usuário via RLS.
+- **Meus alertas** (tela inicial): cada alerta mostra quantos imóveis tem, quantos são novos
+  e o próximo leilão. Dá para editar, pausar, retomar e excluir.
+  - **Pausar** pergunta se os resultados do alerta ficam ou saem da lista. Favoritos e
+    imóveis que também batem em outro alerta ativo seu nunca saem.
+- **Imóveis:** abas *Todos*, *Favoritos* e *Sem interesse*. Marque vários com a caixa de
+  seleção para agir em lote:
+  - **Favoritar:** acompanha de perto (⭐ no Telegram).
+  - **Sem interesse:** o imóvel não volta mais e não gera aviso; dá para restaurar na aba.
+  - **Remover da lista:** some agora e só volta se o imóvel mudar de preço ou de praça.
+  - Toda ação tem **Desfazer** por alguns segundos.
+- **Mais filtros** (tipo, quartos, desconto, área, modalidade, financiamento) filtram a tela.
+  Para valerem também nos **avisos**, salve-os dentro de um alerta ("Salvar estes critérios
+  num alerta", ou "Filtros avançados" ao criar/editar um alerta).
+- **Custo real:** lance, comissão do leiloeiro, ITBI, registro, débitos, reforma e
+  desocupação, com resultado de revenda e de aluguel (retorno sobre o valor de mercado e
+  sobre o capital investido). Os percentuais vêm de exemplo: confirme na prefeitura e no edital.
+- **Ver no mapa:** envia nome do empreendimento, rua e número, bairro, cidade/UF e CEP
+  (quando a Caixa informa). Apto, torre e bloco ficam de fora para o Google achar o prédio.
+- **Faixa de aviso no topo:** aparece se uma busca prevista passou de 2 horas sem rodar ou se
+  a última falhou. Entre duas buscas de horário fixo não há alarme.
 
-**Se está montando o projeto do zero:** roda só `sql/schema.sql`, já sai
-pronto multiusuário.
+## Telegram
 
-**Se já tem o schema antigo (single-user) rodando com dados:**
-1. Rode `sql/migracao_multiusuario.sql` no SQL Editor — ele adapta as
-   tabelas existentes sem apagar nada, mas em dois pontos você precisa
-   colar o seu `user_id` manualmente (o próprio arquivo indica onde;
-   pegue o UUID em Authentication → Users, na sua conta).
-2. Suba o `painel/index.html` e o `scripts/buscar_imoveis.py` novos por
-   cima dos antigos.
+**Conectar (cada pessoa, no próprio login):** menu da conta → *Notificações no Telegram* →
+escanear o QR Code → tocar em **Iniciar**. O QR Code leva um código aleatório de uso único,
+válido por 15 minutos; o bot confirma na hora e a janela do painel vira "Conectado" sozinha.
 
-**Pra adicionar uma nova pessoa** (seu amigo programador, por exemplo):
-1. Supabase → Authentication → Users → Add user → e-mail + senha dele.
-2. Pronto — ele entra no mesmo link do painel, com o próprio login, e
-   cadastra os filtros dele. Não precisa mexer em mais nada.
+**O que chega:**
 
-## O que ainda falta (próxima etapa)
+| Aviso | Quando |
+|---|---|
+| Imóvel novo | a busca encontra um imóvel que bate num alerta seu |
+| Mudou de praça ou de preço | um imóvel já conhecido muda de modalidade ou de valor |
+| Leilão amanhã | só na busca das 20h; só favoritos ou todos, à sua escolha |
+| Resumo do dia | opção "Resumo único às 20h": junta o que foi achado às 10h, 15h e 20h |
 
-- **Telegram**: avisos automáticos de imóvel novo/alterado. Combinamos
-  deixar o site funcionando primeiro — me avisa quando quiser seguir pra
-  essa parte. Com multiusuário, cada pessoa provavelmente vai precisar
-  cadastrar seu próprio chat_id do Telegram — é uma decisão de desenho
-  pra quando chegarmos lá.
-- **Rodar mais de uma vez ao dia**: já está configurado (10h, 15h, 20h em
-  Brasília).
+Imóveis marcados como *sem interesse* nunca geram aviso. Cada pessoa só recebe o que bate
+nos **próprios** alertas.
 
-## Limitações conhecidas
+**Avisos de problema (só administrador):** busca incompleta, busca que falhou e "voltou ao
+normal" vão para o chat definido em `TELEGRAM_ADMIN_CHAT_ID`. O mesmo problema repetido não
+gera aviso repetido.
 
-- A Caixa pode mudar o layout do CSV ou da página de detalhe sem aviso — o
-  script tolera pequenas mudanças (detecta colunas pelo nome, não pela
-  posição), mas mudanças maiores podem exigir ajuste.
-- O filtro de bairro faz comparação textual — bairros com nomes muito
-  genéricos podem gerar falsos positivos ocasionais.
-- Sempre confirme edital, ocupação, débitos e condições de financiamento
-  direto no site oficial da Caixa antes de qualquer decisão — este sistema
-  é só um filtro de descoberta, não substitui a checagem oficial.
+## Instalação do zero
+
+### 1. Supabase
+
+1. Crie um projeto em [supabase.com](https://supabase.com) (região `South America`).
+2. **SQL Editor** → *New query* → cole o conteúdo de `sql/schema.sql` → **Run**. Ele cria
+   as tabelas, as regras de segurança e as liberações de acesso.
+3. **Authentication → Users → Add user**: e-mail e uma **senha forte e só sua**, marcando
+   *Auto Confirm User*. Um usuário por pessoa; não existe tela de cadastro público.
+4. **Project Settings → API**: anote a *Project URL*, a chave *anon* e a *service_role*.
+
+### 2. Painel
+
+No começo do script de `painel/index.html`, ajuste estas constantes:
+
+| Constante | O que colocar |
+|---|---|
+| `SUPABASE_URL_FIXO` | a *Project URL* |
+| `SUPABASE_ANON_KEY_FIXO` | a chave *anon* (pública; **nunca** a `service_role`) |
+| `TELEGRAM_BOT_USERNAME` | o @ do bot, sem o `@` (passo 4) |
+| `NOMES_USUARIOS` | e-mail → nome exibido ("Olá, Fulano"); e-mail ausente aparece como e-mail |
+
+### 3. GitHub
+
+1. Suba todos os arquivos mantendo as pastas. **Cuidado com a pasta `.github`:** no
+   Windows/Mac nomes que começam com ponto ficam ocultos e não sobem no "arrastar". Se
+   sumir, crie o arquivo pelo GitHub (*Add file → Create new file*, nome
+   `.github/workflows/atualizar-imoveis.yml`).
+2. **Settings → Secrets and variables → Actions → Secrets:**
+
+   | Secret | Valor |
+   |---|---|
+   | `SUPABASE_URL` | *Project URL* (sem `/rest/v1`) |
+   | `SUPABASE_SERVICE_KEY` | chave *service_role* |
+   | `TELEGRAM_BOT_TOKEN` | token do bot (passo 4) |
+   | `TELEGRAM_ADMIN_CHAT_ID` | seu chat_id, para os avisos de problema (opcional) |
+
+   Em **Variables**, opcional: `PAINEL_URL` com o endereço do painel (usado nos botões
+   "Ver no Radar" das mensagens).
+3. **Settings → Pages → Deploy from a branch → `main` / `(root)`**. O painel fica em
+   `https://SEU-USUARIO.github.io/SEU-REPO/painel/` (com a barra `/painel/` no fim).
+
+### 4. Bot do Telegram
+
+1. No Telegram, fale com **@BotFather** → `/newbot`. Guarde o **token** e o **@username**.
+   Crie um bot só para este sistema: dois programas lendo o mesmo bot se atrapalham.
+2. Coloque o token no Secret `TELEGRAM_BOT_TOKEN` e o @username em `TELEGRAM_BOT_USERNAME`.
+
+### 5. Conexão instantânea (Edge Function)
+
+Sem esta etapa o QR Code só confirmaria na próxima busca do robô.
+
+1. Supabase → **Edge Functions** → criar função chamada exatamente `telegram-webhook`,
+   colar o conteúdo de `supabase/functions/telegram-webhook/index.ts` e publicar.
+2. Na aba *Settings* da função, **desligar "Verify JWT"** (o Telegram não envia JWT; a
+   proteção é a senha do passo 3).
+3. **Edge Functions → Secrets:** `TELEGRAM_BOT_TOKEN` (o mesmo do GitHub) e
+   `TELEGRAM_WEBHOOK_SECRET` (uma senha inventada por você: 40+ caracteres, só letras,
+   números, `_` e `-`).
+4. Abra no navegador, trocando `TOKEN`, `SENHA` e `SEU-PROJETO`:
+   ```
+   https://api.telegram.org/botTOKEN/setWebhook?url=https://SEU-PROJETO.supabase.co/functions/v1/telegram-webhook&secret_token=SENHA
+   ```
+   Deve responder `"Webhook was set"`. **Não compartilhe esse endereço**: ele contém o token.
+5. Conferir: `https://api.telegram.org/botTOKEN/getWebhookInfo` mostra a `url` e, se algo
+   falhar, `last_error_message`. Para desligar: `.../deleteWebhook` (o robô volta ao método
+   antigo, que lê as mensagens a cada busca).
+
+### 6. Primeira busca
+
+**Actions → Atualizar Radar de Leilões Caixa → Run workflow.** Sem alertas cadastrados, o
+log diz "Nenhum filtro ativo": é esperado. Entre no painel, crie um alerta e rode de novo.
+
+## Operação
+
+- **Rodar na hora:** *Actions → Run workflow*.
+- **Reler a página de todos os imóveis:** *Run workflow* marcando "Reler a página de detalhe
+  de TODOS os imóveis". Use uma vez depois de uma melhoria na leitura (nome do empreendimento,
+  CEP...). Não gera avisos para quem já estava salvo.
+- **Novo usuário:** *Authentication → Users → Add user*. Ele entra no mesmo link e cadastra
+  os próprios alertas.
+- **Ordem ao atualizar:** (1) rodar a migração SQL nova, (2) atualizar a Edge Function se
+  mudou, (3) editar `scripts/buscar_imoveis.py` e `painel/index.html` no GitHub, (4)
+  **Ctrl+F5** no painel. O banco vem primeiro: robô ou painel novos sem a coluna nova
+  quebram. No GitHub, **edite** o arquivo (lápis → Ctrl+A → colar → *Commit changes*); não
+  apague, para não perder a pasta.
+
+### Atualizando uma instalação antiga
+
+Rode no SQL Editor, na ordem, só o que ainda não rodou (todos podem rodar de novo):
+
+| Arquivo | Para quê |
+|---|---|
+| `migracao_multiusuario.sql` | vinda da versão de um usuário só (pede o seu `user_id` em dois pontos) |
+| `adicionar_telegram.sql` | tabela do perfil/Telegram |
+| `migracao_v3.sql` | redesign, calculadora, status das buscas |
+| `liberar_acesso.sql` | liberações de acesso (ver abaixo) |
+| `migracao_v4.sql` | filtros avançados, resumo único, código de uso único no QR Code |
+| `migracao_v5.sql` | CEP (recria a view `meus_imoveis`) |
+
+## Problemas comuns
+
+| O que aparece | O que é | O que fazer |
+|---|---|---|
+| Faixa "Parte dos dados não carregou… *permission denied*" | desde 2026 o Supabase não libera tabela nova para o painel sozinho | rodar `sql/liberar_acesso.sql` |
+| Faixa com "JWT issued at future" ou erro de rede | relógio entre servidores / rede, passageiro | o painel já tenta de novo sozinho; se aparecer, **F5** |
+| Erro "column … does not exist" no log do robô ou ao salvar | migração SQL não rodada | rodar a migração na tabela acima |
+| QR Code não confirma | a Edge Function ou o webhook não estão ligados | `getWebhookInfo` (veja `last_error_message`: 401 = senha diferente nos dois lugares; 404 = nome da função errado) |
+| "Esse link expirou ou já foi usado" | o QR Code vale 15 min e só uma vez | gerar de novo na janela do Telegram |
+| Faixa "A busca das 10h ainda não apareceu" | uma busca prevista passou de 2 h sem rodar (o GitHub às vezes atrasa) | esperar; se persistir, *Actions* → ver o log ou rodar manualmente |
+| Pasta `.github` ou `scripts` sumiu no GitHub | arquivo foi apagado em vez de editado; o Git não guarda pasta vazia | recriar o arquivo (*Add file → Create new file* com o caminho completo) |
+| Painel antigo depois de atualizar | cache do navegador | **Ctrl+F5**, depois de ~1 minuto da publicação |
+
+## Limitações
+
+- A Caixa pode mudar o layout do CSV ou das páginas de detalhe sem aviso. O robô detecta as
+  colunas do CSV pelo nome e tolera pequenas mudanças; mudanças maiores exigem ajuste.
+- Valores que o sistema mostra vêm da Caixa e podem estranhar (em leilão SFI o 2º leilão pode
+  ser maior que o 1º). Confira sempre no site oficial.
+- O desconto usado nos **avisos** parte do preço atual do CSV; o painel usa a praça vigente.
+- O GitHub pode atrasar as buscas agendadas e desativa agendamentos de repositórios sem
+  nenhuma atividade por muito tempo.
+- Os percentuais da calculadora (comissão, ITBI) são exemplos editáveis, não regra.
+- Sempre confirme edital, ocupação, débitos e condições de financiamento no site oficial da
+  Caixa antes de qualquer decisão. Este sistema é uma ferramenta de descoberta e não
+  substitui a checagem oficial.
