@@ -2,16 +2,28 @@ name: Atualizar Radar de Leilões Caixa
 
 on:
   schedule:
-    # Horários em Brasília (UTC-3) — GitHub Actions usa UTC, por isso a diferença:
-    - cron: "0 13 * * *"   # 10:00 em Brasília
-    - cron: "0 18 * * *"   # 15:00 em Brasília
-    - cron: "0 23 * * *"   # 20:00 em Brasília (é nesta que saem os lembretes de véspera)
+    # Horários em Brasília (UTC-3). O GitHub Actions usa UTC (por isso 13h = 10h) e NÃO garante o minuto:
+    # em horários de pico, no começo de cada hora, ele atrasa e até descarta agendamentos. Por isso as buscas
+    # saem nos minutos 7 (principal) e 37 (reserva), fora do pico. A reserva só busca se a principal
+    # não rodou (o robô confere, ver RADAR_RESERVA abaixo).
+    - cron: "7 13 * * *"    # 10:07 principal
+    - cron: "37 13 * * *"   # 10:37 reserva
+    - cron: "7 18 * * *"    # 15:07 principal
+    - cron: "37 18 * * *"   # 15:37 reserva
+    - cron: "7 23 * * *"    # 20:07 principal (é nesta que saem os lembretes de véspera e o resumo do dia)
+    - cron: "37 23 * * *"   # 20:37 reserva
   workflow_dispatch:       # permite rodar manualmente pela aba "Actions" no GitHub
     inputs:
       atualizar_detalhes:
         description: "Reler a página de detalhe de TODOS os imóveis (marque uma vez depois de uma melhoria na leitura)"
         type: boolean
         default: false
+
+# Uma busca por vez: se a reserva começar enquanto a principal ainda roda, espera a principal terminar
+# (e aí, por já haver busca recente, a reserva não faz nada).
+concurrency:
+  group: radar-busca
+  cancel-in-progress: false
 
 jobs:
   buscar-imoveis:
@@ -35,6 +47,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
           PAINEL_URL: ${{ vars.PAINEL_URL }}
+          RADAR_RESERVA: ${{ startsWith(github.event.schedule, '37 ') && 'sim' || 'nao' }}
         run: python scripts/buscar_imoveis.py ${{ inputs.atualizar_detalhes && '--atualizar-detalhes' || '' }}
 
       # Rede de segurança: se algo quebrou antes do próprio robô conseguir
