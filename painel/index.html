@@ -178,6 +178,47 @@
   .praca.passada{background:#F7F9FB;}
   .praca.passada .l1,.praca.passada .l2{color:#6A7587;}
   .praca.passada .l2{text-decoration:line-through;}
+  /* prazo informado: licitação aberta e venda direta/online */
+  .pz{padding:0 20px 18px;}
+  .pz .mod{margin:0 0 8px;font-size:13px;font-weight:600;color:#4A5668;}
+  .pz-bloco{border:2px solid var(--azul);border-radius:10px;background:#fff;padding:12px 14px;display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;}
+  .pz-bloco.tom-ambar{border-color:#E0A100;background:#FFF8E5;}
+  .pz-bloco.tom-verm{border-color:#B3261E;background:#FDECEA;}
+  .pz-bloco.tom-fim{border:1px solid #CDD5DF;background:#F1F3F6;}
+  .pz-info{flex:1 1 200px;display:flex;flex-direction:column;gap:3px;min-width:0;}
+  .pz-linha1{display:flex;flex-wrap:wrap;align-items:center;gap:8px;font-size:13px;color:#3E4A5C;}
+  .pz-linha1 svg{width:16px;height:16px;flex-shrink:0;}
+  .tom-ambar .pz-linha1{color:#6B3A00;} .tom-verm .pz-linha1{color:#8C1D18;} .tom-fim .pz-linha1{color:#566273;}
+  .pz-rot{font-weight:600;}
+  .pz-bloco[data-grupo="licitacao"] .pz-rot{font-size:15px;font-weight:700;color:var(--azul-escuro);}
+  .pz-bloco[data-grupo="licitacao"].tom-fim .pz-rot{color:#566273;}
+  .pz-data{font-size:16px;font-weight:700;color:var(--azul-escuro);}
+  .tom-fim .pz-data{color:#566273;}
+  .pz-nota{font-size:12px;color:#566273;}
+  .pz-relogio-box{text-align:right;}
+  .pz-faltam{font-size:12px;color:#3E4A5C;}
+  .pz-relogio{font-size:30px;line-height:1.1;font-weight:700;color:var(--azul-escuro);letter-spacing:-.01em;font-variant-numeric:tabular-nums;}
+  .tom-ambar .pz-relogio,.tom-ambar .pz-faltam{color:#6B3A00;} .tom-verm .pz-relogio,.tom-verm .pz-faltam{color:#8C1D18;}
+  .pz-badge{display:inline-flex;align-items:center;font-size:12px;font-weight:700;border-radius:20px;padding:2px 9px;}
+  .pz-badge:empty{display:none;}
+  .pz-badge.b-azul{color:#164F8F;background:#E8F0FA;} .pz-badge.b-ambar{color:#6B3A00;background:#FFE3A8;}
+  .pz-badge.b-verm{color:#8C1D18;background:#F9D3CF;} .pz-badge.b-fim{color:#3E4A5C;background:#DDE2E8;}
+  .pz-vazio{border:1.5px dashed #AEB9C7;border-radius:10px;background:#F7F9FB;padding:12px 14px;display:flex;flex-wrap:wrap;align-items:center;gap:10px 14px;}
+  .pz-vazio .txt{flex:1 1 200px;display:flex;flex-direction:column;gap:2px;}
+  .pz-vazio b{font-size:14px;color:var(--azul-escuro);} .pz-vazio .txt span{font-size:13px;color:#566273;}
+  .btn-azul-contorno{border-color:var(--azul);color:var(--azul);font-weight:600;}
+  .pz-resumo{display:flex;flex-direction:column;gap:2px;background:#F7F9FB;border:1px solid #E3E8EF;border-radius:10px;padding:10px 14px;}
+  .pz-resumo b{font-size:12px;color:#164F8F;} .pz-resumo span{font-size:15px;font-weight:600;color:var(--azul-escuro);} .pz-resumo small{font-size:13px;color:#566273;}
+  .pz-campos{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:14px;margin-top:14px;}
+  .pz-campos input{min-height:46px;font-size:16px;}
+  .pz-previa{border:2px solid var(--azul);border-radius:10px;padding:10px 14px;display:flex;flex-direction:column;gap:2px;margin-top:12px;}
+  .pz-previa small{font-size:12px;color:#566273;} .pz-previa b{font-size:16px;color:var(--azul-escuro);}
+  .pz-previa .pz-relogio-previa{font-size:22px;font-weight:700;color:var(--azul-escuro);font-variant-numeric:tabular-nums;}
+  .pz-msg{display:flex;gap:10px;align-items:flex-start;border-radius:10px;padding:10px 14px;font-size:14px;margin-top:12px;}
+  .pz-msg.erro{background:#FDECEA;border:1px solid #E7A39D;color:#8C1D18;} .pz-msg.aviso{background:#FFF4DE;border:1px solid #F2C46B;color:#3D2600;}
+  .pz-avisos{background:#F7F9FB;border:1px solid #E3E8EF;border-radius:10px;padding:10px 14px;font-size:13px;color:#3E4A5C;line-height:1.45;margin-top:12px;}
+  .ag-chip{display:inline-flex;align-items:center;font-size:11px;font-weight:700;border-radius:20px;padding:1px 8px;margin-left:6px;}
+  .ag-leilao{background:#E8F0FA;color:#164F8F;} .ag-lic{background:#E8ECF1;color:#3E4A5C;} .ag-prazo{background:#FFE3A8;color:#6B3A00;}
   .praca.atual{border:2px solid var(--azul);padding:9px 11px;}
   .praca.atual .l1{color:var(--azul-escuro);font-weight:600;}
   .praca.atual .l2{color:var(--azul-escuro);font-weight:700;}
@@ -362,7 +403,7 @@ const UFS = ['AC','AL','AP','AM','BA','CE','DF','ES','GO','MA','MT','MS','MG','P
 
 let sb = null;
 const S = {
-  user: null, email: '', filtros: [], imoveis: [], perfil: null, custos: {}, status: [],
+  user: null, email: '', filtros: [], imoveis: [], perfil: null, custos: {}, prazos: {}, status: [],
   view: 'alertas', aba: 'todos', busca: '', origem: '', bairros: new Set(), organizar: 'bairro',
   mf: { tipos: new Set(), quartos: 0, desconto: 0, area: '', modalidades: new Set(['leilao', 'direta', 'licitacao']), financiamento: false },
   mfAberto: false, sel: new Set(), destaque: null,
@@ -508,6 +549,9 @@ const ICONES = {
   mais: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>',
   filtro: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>',
   telegram: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#1C60AB" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 4 3 11l6 2.5L11.5 20 21 4Z"/><path d="m9 13.5 4.5-4"/></svg>',
+  calendario: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15.5" rx="2.5"/><path d="M3.5 10h17M8 3v4M16 3v4"/></svg>',
+  ampulheta: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3h10M7 21h10M8 3c0 5 4 5 4 9s-4 4-4 9M16 3c0 5-4 5-4 9s4 4 4 9"/></svg>',
+  lapis: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m13.5 6.5 4 4"/></svg>',
   aviso: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#8A4B00" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3 2 20h20L12 3Z"/><path d="M12 10v4M12 17v.5"/></svg>',
 };
 const SVG_OLHO_FECHADO = '<svg viewBox="0 0 24 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M2 7c2.5-4 7-6 10-6s7.5 2 10 6"/><line x1="5" y1="9" x2="3.5" y2="11.7"/><line x1="9" y1="10.6" x2="8.3" y2="13.3"/><line x1="15" y1="10.6" x2="15.7" y2="13.3"/><line x1="19" y1="9" x2="20.5" y2="11.7"/></svg>';
@@ -600,16 +644,57 @@ function listaFiltrada(ignorarBairros) {
     return true;
   });
 }
+// ---------------- prazos informados (licitação aberta e venda direta/online) ----------------
+// Tudo em horário de Brasília (UTC-3, sem horário de verão), qualquer que seja o fuso de quem olha.
+const DIAS_BR = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+function pad2(n) { return (n < 10 ? '0' : '') + n; }
+function brD(ms) { return new Date(ms - 3 * 3600000); }
+function brHora(ms) { const d = brD(ms), m = d.getUTCMinutes(); return d.getUTCHours() + 'h' + (m ? pad2(m) : ''); }
+function brDiaMes(ms) { const d = brD(ms); return DIAS_BR[d.getUTCDay()] + ' ' + pad2(d.getUTCDate()) + '/' + pad2(d.getUTCMonth() + 1); }
+function brDiaUtc(ms) { const d = brD(ms); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()); }
+function brDiasAte(ms, agora) { return Math.round((brDiaUtc(ms) - brDiaUtc(agora == null ? Date.now() : agora)) / 86400000); }
+function brEm(dias, h, m, agora) { const d = brD(agora == null ? Date.now() : agora); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + dias, h + 3, m, 0); }
+function brIsoData(ms) { const d = brD(ms); return d.getUTCFullYear() + '-' + pad2(d.getUTCMonth() + 1) + '-' + pad2(d.getUTCDate()); }
+function brIsoHora(ms) { const d = brD(ms); return pad2(d.getUTCHours()) + ':' + pad2(d.getUTCMinutes()); }
+function brParaMs(dataIso, horaIso) {
+  const pd = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dataIso || ''), ph = /^(\d{2}):(\d{2})$/.exec(horaIso || '');
+  return pd && ph ? Date.UTC(+pd[1], +pd[2] - 1, +pd[3], +ph[1] + 3, +ph[2], 0) : null;
+}
+function brRelogio(ms, agora) {
+  const t = Math.max(0, Math.floor((ms - agora) / 1000));
+  const d = Math.floor(t / 86400), h = Math.floor(t % 86400 / 3600), m = Math.floor(t % 3600 / 60), s = t % 60;
+  return (d > 0 ? d + 'd ' : '') + pad2(h) + ':' + pad2(m) + ':' + pad2(s);
+}
+// só licitação aberta e venda direta/online (venda online = venda direta) têm prazo informado
+function grupoPrazo(im) { const g = grupoModalidade(im.modalidade); return g === 'licitacao' || g === 'direta' ? g : null; }
+function prazoDe(im) { const p = S.prazos && S.prazos[im.id]; return p ? p.ms : null; }
+// azul: mais de 3 dias | âmbar: até 3 dias | vermelho: até 24 h | cinza: encerrado
+function estadoPrazo(g, ms, agora) {
+  const dif = ms - agora;
+  if (dif <= 0) return { tom: 'fim', badge: g === 'direta' ? 'Encerrado' : 'Realizada', bclasse: 'b-fim', relogio: '' };
+  const tom = dif <= 24 * 3600000 ? 'verm' : dif <= 3 * 86400000 ? 'ambar' : 'azul';
+  const n = brDiasAte(ms, agora);
+  let badge = '';
+  if (g === 'direta') badge = tom === 'ambar' ? 'Menos de 3 dias' : tom === 'verm' ? 'Encerra ' + (n === 0 ? 'hoje' : 'amanhã') : '';
+  else badge = n === 0 ? 'Hoje' : n === 1 ? 'Amanhã' : 'Em ' + n + ' dias';
+  return { tom, badge, bclasse: 'b-' + tom, relogio: brRelogio(ms, agora) };
+}
+
 function agendaProximos(dias = 7) {
   const itens = [];
   visiveis().forEach(im => {
     const sit = situacao(im);
     if (sit.atual && sit.atual.data) {
       const n = diasAte(sit.atual.data);
-      if (n >= 0 && n < dias) itens.push({ im, praca: sit.atual });
+      if (n >= 0 && n < dias) itens.push({ im, tipo: 'leilao', praca: sit.atual, ordem: sit.atual.data.getTime() });
+    }
+    const g = grupoPrazo(im), ms = g ? prazoDe(im) : null;   // licitação e prazo final de venda direta entram na agenda
+    if (ms && ms > Date.now()) {
+      const n = brDiasAte(ms);
+      if (n >= 0 && n < dias) itens.push({ im, tipo: g === 'licitacao' ? 'licitacao' : 'prazo', ms, valor: sit.valorAtual, ordem: ms });
     }
   });
-  return itens.sort((a, b) => a.praca.data - b.praca.data);
+  return itens.sort((a, b) => a.ordem - b.ordem);
 }
 function estatAlerta(f) {
   const ims = visiveis().filter(im => (im.filtros_correspondentes || []).includes(f.nome));
@@ -643,12 +728,13 @@ async function lerComRetry(fabrica) {
 }
 
 async function carregarTudo() {
-  const [rf, ri, rp, rc, rs] = await Promise.all([
+  const [rf, ri, rp, rc, rs, rz] = await Promise.all([
     lerComRetry(() => sb.from('filtros').select('*').order('criado_em', { ascending: false })),
     lerComRetry(() => sb.from('meus_imoveis').select('*').order('atualizado_em', { ascending: false }).limit(3000)),
     lerComRetry(() => sb.from('perfil_usuario').select('*').maybeSingle()),
     lerComRetry(() => sb.from('custo_imovel').select('*')),
     lerComRetry(() => sb.from('status_execucao').select('*').order('executado_em', { ascending: false }).limit(12)),
+    lerComRetry(() => sb.from('prazo_imovel').select('imovel_id,data_hora')),
   ]);
   // Leitura que falhou NÃO apaga o que já estava na tela, e o painel não afirma que "não há nada":
   // marca a falha pra mostrar um aviso em vez de um estado vazio enganoso.
@@ -658,9 +744,13 @@ async function carregarTudo() {
   if (!rp.error) S.perfil = rp.data || null;
   if (!rc.error) { S.custos = {}; (rc.data || []).forEach(c => { S.custos[c.imovel_id] = c; }); }
   if (!rs.error) S.status = rs.data || [];
+  if (!rz.error) {   // prazos informados (licitação aberta e venda direta/online), compartilhados entre os usuários
+    S.prazos = {};
+    (rz.data || []).forEach(p => { const ms = Date.parse(p.data_hora); if (!isNaN(ms)) S.prazos[p.imovel_id] = { ms }; });
+  }
   // não esconder falha de leitura: se uma tabela não carrega, o painel avisa qual
   S.erros = [];
-  [['filtros', rf], ['imóveis', ri], ['perfil_usuario', rp], ['custo_imovel', rc], ['status_execucao', rs]].forEach(([nome, r]) => {
+  [['filtros', rf], ['imóveis', ri], ['perfil_usuario', rp], ['custo_imovel', rc], ['status_execucao', rs], ['prazo_imovel', rz]].forEach(([nome, r]) => {
     if (r.error) { console.error('Erro ao ler ' + nome, r.error); S.erros.push(nome + ': ' + (r.error.message || r.error.code || 'erro')); }
   });
   const ids = new Set(S.imoveis.map(i => i.id));
@@ -696,6 +786,7 @@ function render() {
   if (S.view === 'alertas') renderAlertas();
   if (S.view === 'imoveis') renderImoveis();
   if (S.view === 'agenda') renderAgenda();
+  garantirRelogio();
 }
 
 function renderStatus() {
@@ -717,8 +808,10 @@ function renderStatus() {
   let faixas = '';
   if (S.erros && S.erros.length) {
     const semPermissao = S.erros.some(e => /permission denied|42501/i.test(e));
+    const semTabela = S.erros.some(e => /does not exist|42P01|schema cache/i.test(e));
     const dica = semPermissao
       ? 'Falta liberar a tabela no Supabase (arquivo liberar_acesso.sql).'
+      : semTabela ? 'Falta rodar a migração mais recente do banco (pasta sql, arquivo migracao_v7.sql).'
       : 'Costuma passar sozinho: tente de novo. Se continuar, avise o administrador do sistema.';
     faixas += '<section class="faixa faixa-aviso" role="alert">' + ICONES.aviso + '<p><b>Parte dos dados não carregou.</b> ' + esc(S.erros.join(' | '))
       + '. ' + dica + '</p><button class="btn btn-sec" data-acao="recarregar">Tentar de novo</button></section>';
@@ -817,7 +910,7 @@ function renderImoveis() {
   h += '<div class="contagem">' + (lista.length === total ? lista.length + (lista.length === 1 ? ' imóvel' : ' imóveis')
     : 'Mostrando ' + lista.length + ' de ' + total + ' imóveis') + '</div>';
   h += '<div class="layout-imoveis"><div class="lista">' + (lista.length ? renderLista(lista) : vazioImoveis()) + '</div>'
-    + '<aside class="agenda-lateral" aria-label="Próximos leilões">' + htmlAgenda() + '</aside></div>';
+    + '<aside class="agenda-lateral" aria-label="Próximos leilões e prazos">' + htmlAgenda() + '</aside></div>';
   $('view-imoveis').innerHTML = h;
   if (S.destaque) {
     const alvo = document.getElementById('im-' + S.destaque);
@@ -937,6 +1030,57 @@ function renderLista(lista) {
   }).join('');
 }
 
+// Bloco do prazo no card: licitação aberta (data, sem cronômetro) e venda direta/online (prazo final com cronômetro)
+function htmlPrazo(im, g) {
+  const lic = g === 'licitacao', ms = prazoDe(im);
+  const mod = '<p class="mod">' + esc(im.modalidade || (lic ? 'Licitação aberta' : 'Venda direta (online)')) + '</p>';
+  if (!ms) {
+    const t = lic ? ['Data da licitação não informada', 'O sistema não consegue ler essa data. Informe para vê-la aqui e ver na agenda.', 'Informar data e hora']
+                  : ['Prazo final não informado', 'Informe o prazo para ver o cronômetro e receber avisos antes de encerrar.', 'Informar prazo final'];
+    return '<div class="pz">' + mod + '<div class="pz-vazio"><div class="txt"><b>' + t[0] + '</b><span>' + t[1] + '</span></div>'
+      + '<button class="btn btn-sec btn-azul-contorno" data-acao="prazo" data-id="' + im.id + '">' + ICONES.calendario + t[2] + '</button></div></div>';
+  }
+  const e = estadoPrazo(g, ms, Date.now());
+  const dataTxt = brDiaMes(ms) + ' às ' + brHora(ms);
+  const badge = '<span class="pz-badge ' + e.bclasse + '">' + esc(e.badge) + '</span>';
+  const acao = e.tom === 'fim'
+    ? '<button class="btn btn-sec btn-azul-contorno" data-acao="prazo" data-id="' + im.id + '">' + ICONES.calendario + (lic ? 'Informar nova data' : 'Informar novo prazo') + '</button>'
+    : '<button class="btn btn-texto" data-acao="prazo" data-id="' + im.id + '">' + ICONES.lapis + 'Editar</button>';
+  if (lic) {
+    return '<div class="pz">' + mod + '<div class="pz-bloco tom-' + e.tom + '" data-alvo="' + ms + '" data-grupo="licitacao">'
+      + '<div class="pz-info"><div class="pz-linha1"><span class="pz-rot">Licitação, ' + dataTxt + '</span>' + badge + '</div>'
+      + '<span class="pz-nota">Data informada no Radar. Confira no edital da Caixa.</span></div>' + acao + '</div></div>';
+  }
+  return '<div class="pz">' + mod + '<div class="pz-bloco tom-' + e.tom + '" data-alvo="' + ms + '" data-grupo="direta" role="timer" aria-live="off" aria-label="Prazo final: ' + dataTxt + '">'
+    + '<div class="pz-info"><div class="pz-linha1">' + ICONES.ampulheta + '<span class="pz-rot">' + (e.tom === 'fim' ? 'Prazo final encerrado' : 'Prazo final da venda direta') + '</span>' + badge + '</div>'
+    + '<div class="pz-data">' + dataTxt + '</div></div>'
+    + (e.tom === 'fim' ? '' : '<div class="pz-relogio-box"><div class="pz-faltam">faltam</div><div class="pz-relogio">' + e.relogio + '</div></div>')
+    + acao + '</div></div>';
+}
+// Roda a cada segundo: anda o cronômetro e troca a cor/selo quando o prazo chega perto. Só mexe no texto
+// e nas classes dos blocos, sem redesenhar a lista.
+let relogioTimer = null;
+function garantirRelogio() {
+  const tem = document.querySelector('.pz-bloco[data-alvo], .pz-relogio-previa[data-alvo]');
+  if (tem && !relogioTimer) relogioTimer = setInterval(atualizarRelogios, 1000);
+  else if (!tem && relogioTimer) { clearInterval(relogioTimer); relogioTimer = null; }
+}
+function atualizarRelogios() {
+  const agora = Date.now();
+  document.querySelectorAll('.pz-bloco[data-alvo]').forEach(el => {
+    const ms = Number(el.dataset.alvo), g = el.dataset.grupo, e = estadoPrazo(g, ms, agora);
+    if (e.tom === 'fim' && !el.classList.contains('tom-fim')) { render(); return; }   // acabou agora: redesenha com o botão de novo prazo
+    const cls = 'pz-bloco tom-' + e.tom;
+    if (el.className !== cls) el.className = cls;
+    const b = el.querySelector('.pz-badge');
+    if (b) { if (b.textContent !== e.badge) b.textContent = e.badge; const bc = 'pz-badge ' + e.bclasse; if (b.className !== bc) b.className = bc; }
+    const r = el.querySelector('.pz-relogio');
+    if (r && r.textContent !== e.relogio) r.textContent = e.relogio;
+  });
+  document.querySelectorAll('.pz-relogio-previa[data-alvo]').forEach(el => { el.textContent = 'faltam ' + brRelogio(Number(el.dataset.alvo), agora); });
+  garantirRelogio();
+}
+
 function cardImovel(im) {
   const sit = situacao(im), desc = descontoPct(im, sit), av = Number(im.valor_avaliacao);
   let sub = '';
@@ -965,6 +1109,8 @@ function cardImovel(im) {
       return '<li class="praca' + (ehAtual ? ' atual' : '') + (urg ? ' urgente' : '') + '"><div class="l1"><span>' + p.n + 'º leilão, ' + dataTxt + '</span>'
         + (rel ? '<span class="quando' + (urg ? ' urgente' : '') + '">' + rel + '</span>' : '') + '</div><div class="l2">' + brl(p.valor) + '</div></li>';
     }).join('') + '</ol></div>';
+  } else if (grupoPrazo(im)) {
+    pracas = htmlPrazo(im, grupoPrazo(im));
   } else if (im.modalidade) {
     pracas = '<p style="margin:0;padding:0 20px 16px;font-size:14px;color:var(--ink-2)">' + esc(im.modalidade) + ': sem data de leilão.</p>';
   }
@@ -1010,14 +1156,26 @@ function renderSemInteresse() {
 
 function htmlAgenda() {
   const itens = agendaProximos(7);
-  let h = '<h2 style="font-size:16px;font-weight:600;color:var(--azul-escuro)">Próximos leilões</h2><p class="ajuda">Dos seus imóveis, nos próximos 7 dias.</p>';
-  if (!itens.length) return h + '<p class="ajuda">Nenhum leilão nos próximos 7 dias.</p>';
-  return h + '<ol class="agenda-lista">' + itens.map(({ im, praca }) => {
-    const n = diasAte(praca.data);
-    const dia = n === 0 ? 'Hoje, ' + dataCurta(praca.data) : n === 1 ? 'Amanhã, ' + dataCurta(praca.data) : dataCurta(praca.data);
-    return '<li><div class="dia' + (n <= 1 ? ' urgente' : '') + '">' + (im.favorito ? '★ ' : '') + dia + '</div>'
+  let h = '<h2 style="font-size:16px;font-weight:600;color:var(--azul-escuro)">Próximos leilões e prazos</h2><p class="ajuda">Dos seus imóveis, nos próximos 7 dias. Datas e prazos informados por você também aparecem aqui.</p>';
+  if (!itens.length) return h + '<p class="ajuda">Nenhum leilão ou prazo nos próximos 7 dias.</p>';
+  return h + '<ol class="agenda-lista">' + itens.map(it => {
+    const im = it.im;
+    let dia, urg, chip, linha2;
+    if (it.tipo === 'leilao') {
+      const n = diasAte(it.praca.data);
+      dia = n === 0 ? 'Hoje, ' + dataCurta(it.praca.data) : n === 1 ? 'Amanhã, ' + dataCurta(it.praca.data) : dataCurta(it.praca.data);
+      urg = n <= 1; chip = '<span class="ag-chip ag-leilao">Leilão</span>';
+      linha2 = brl(it.praca.valor) + ' <span>' + it.praca.n + 'º leilão' + (it.praca.hora ? ', ' + it.praca.hora : '') + '</span>';
+    } else {
+      const n = brDiasAte(it.ms);
+      dia = (n === 0 ? 'Hoje, ' : n === 1 ? 'Amanhã, ' : '') + brDiaMes(it.ms);
+      urg = n <= 1;
+      chip = it.tipo === 'licitacao' ? '<span class="ag-chip ag-lic">Licitação</span>' : '<span class="ag-chip ag-prazo">Prazo final</span>';
+      linha2 = (it.valor != null ? brl(it.valor) + ' ' : '') + '<span>' + (it.tipo === 'licitacao' ? 'licitação, ' + brHora(it.ms) : 'encerra às ' + brHora(it.ms)) + '</span>';
+    }
+    return '<li><div class="dia' + (urg ? ' urgente' : '') + '">' + (im.favorito ? '★ ' : '') + dia + chip + '</div>'
       + '<button data-acao="ir-imovel" data-id="' + im.id + '">' + esc(nomeBairro(im)) + (im.fatos && im.fatos.tipo ? ', ' + esc(im.fatos.tipo.toLowerCase()) : '') + '</button>'
-      + '<div class="v">' + brl(praca.valor) + ' <span>' + praca.n + 'º leilão' + (praca.hora ? ', ' + praca.hora : '') + '</span></div></li>';
+      + '<div class="v">' + linha2 + '</div></li>';
   }).join('') + '</ol>';
 }
 function renderAgenda() {
@@ -1378,6 +1536,76 @@ async function prepararVinculo() {
   return error ? { erro: error.message } : { codigo };
 }
 
+// ---------------- prazo da licitação aberta / venda direta (online) ----------------
+let prazoAtual = null;   // { id, g }
+function lerPrazoModal() { return brParaMs(($('pz-data') || {}).value, ($('pz-hora') || {}).value); }
+function atualizarPreviaPrazo() {
+  if (!prazoAtual || !$('pz-feedback')) return;
+  const lic = prazoAtual.g === 'licitacao', agora = Date.now(), ms = lerPrazoModal();
+  let h = '', ok = false;
+  if (!ms) {
+    h = '<div class="pz-msg erro" role="alert">' + ICONES.aviso + '<span>Preencha o dia e a hora.</span></div>';
+  } else if (ms <= agora) {
+    h = '<div class="pz-msg erro" role="alert">' + ICONES.aviso + '<span>Essa data e hora já passaram. Confira o dia e o horário.</span></div>';
+  } else {
+    ok = true;
+    if (ms - agora > 366 * 86400000) h += '<div class="pz-msg aviso" role="status">' + ICONES.aviso + '<span>Essa data está a mais de 1 ano daqui. Confira o ano antes de salvar.</span></div>';
+    const n = brDiasAte(ms, agora), rel = n === 0 ? 'hoje' : n === 1 ? 'amanhã' : 'em ' + n + ' dias';
+    h += '<div class="pz-previa"><small>Vai aparecer assim no card:</small><b>'
+      + (lic ? 'Licitação, ' + brDiaMes(ms) + ' às ' + brHora(ms) + ' · ' + rel : 'Prazo final, ' + brDiaMes(ms) + ' às ' + brHora(ms)) + '</b>'
+      + (lic ? '' : '<span class="pz-relogio-previa" data-alvo="' + ms + '">faltam ' + brRelogio(ms, agora) + '</span>') + '</div>';
+  }
+  $('pz-feedback').innerHTML = h;
+  garantirRelogio();
+  const b = $('pz-salvar'); if (b) b.disabled = !ok;
+}
+function abrirPrazo(id) {
+  const im = S.imoveis.find(x => x.id === id), g = im && grupoPrazo(im);
+  if (!g) return;
+  const lic = g === 'licitacao', ms = prazoDe(im), agora = Date.now();
+  prazoAtual = { id, g };
+  const base = ms || (lic ? brEm(5, 10, 0, agora) : brEm(9, 23, 59, agora));
+  const endereco = (im.empreendimento ? im.empreendimento + ', ' : '') + (im.endereco || '');
+  abrirModal(cabModal(lic ? 'Data e hora da licitação' : 'Prazo final da venda direta')
+    + '<div class="modal-corpo">'
+    + '<div class="pz-resumo"><b>' + (lic ? 'Licitação aberta' : 'Venda direta (online)') + '</b><span>' + esc(nomeBairro(im)) + ', ' + esc(im.cidade) + ' (' + esc(im.uf) + ')</span><small>' + esc(endereco) + '</small></div>'
+    + '<div class="pz-campos"><label class="campo">Data<input type="date" id="pz-data" value="' + brIsoData(base) + '"></label>'
+    + '<label class="campo">Hora<input type="time" id="pz-hora" value="' + brIsoHora(base) + '"></label></div>'
+    + '<p class="ajuda">Horário de Brasília. Digite ou escolha no calendário. Vale para todos que acompanham este imóvel.</p>'
+    + '<div id="pz-feedback"></div>'
+    + '<div class="pz-avisos"><b>Avisos no Telegram.</b> '
+    + (lic ? 'Você recebe um aviso na véspera (busca das 20h) e outro no dia da licitação (busca das 10h).' : 'Você recebe um aviso 3 dias antes, 1 dia antes e no dia do prazo.')
+    + ' <button type="button" class="btn btn-texto" data-acao="abrir-notificacoes">Mudar avisos</button></div></div>'
+    + '<div class="modal-rodape">' + (ms ? '<button type="button" class="btn btn-texto" style="color:var(--vermelho);margin-right:auto" data-acao="prazo-remover">Remover data</button>' : '')
+    + '<button type="button" class="btn btn-sec btn-lg" data-acao="fechar-modal">Cancelar</button>'
+    + '<button type="button" class="btn btn-pri btn-lg" id="pz-salvar" data-acao="prazo-salvar">Salvar</button></div>');
+  atualizarPreviaPrazo();
+}
+async function salvarPrazo() {
+  if (!prazoAtual) return;
+  const ms = lerPrazoModal();
+  if (!ms || ms <= Date.now()) { atualizarPreviaPrazo(); return; }
+  const { id, g } = prazoAtual;
+  const { error } = await sb.from('prazo_imovel').upsert({ imovel_id: id, data_hora: new Date(ms).toISOString(), atualizado_em: new Date().toISOString() }, { onConflict: 'imovel_id' });
+  if (error) { toast('Não foi possível salvar o prazo: ' + error.message); return; }
+  S.prazos[id] = { ms };
+  fecharModal(); render();
+  toast(g === 'licitacao' ? 'Data da licitação salva.' : 'Prazo final salvo.');
+}
+async function removerPrazo() {
+  if (!prazoAtual) return;
+  const { id } = prazoAtual, anterior = S.prazos[id];
+  const { error } = await sb.from('prazo_imovel').delete().eq('imovel_id', id);
+  if (error) { toast('Não foi possível remover: ' + error.message); return; }
+  delete S.prazos[id];
+  fecharModal(); render();
+  toast('Data removida.', anterior ? async () => {
+    const r = await sb.from('prazo_imovel').upsert({ imovel_id: id, data_hora: new Date(anterior.ms).toISOString(), atualizado_em: new Date().toISOString() }, { onConflict: 'imovel_id' });
+    if (r.error) { toast('Não foi possível desfazer: ' + r.error.message); return; }
+    S.prazos[id] = anterior; render();
+  } : null);
+}
+
 function abrirPerfil() {
   $('menu-conta').classList.add('oculto');
   abrirModal(cabModal('Meu nome')
@@ -1424,6 +1652,13 @@ async function abrirNotificacoes() {
     + '<div class="pref" style="border:none"><input type="checkbox" id="pf-vesp"' + (modo !== 'nao' ? ' checked' : '') + '><span style="flex:1"><b>Lembrete na véspera do leilão</b><span>Chega na busca das 20h do dia anterior.</span>'
     + '<label class="campo" style="margin-top:8px;flex-direction:row;align-items:center;gap:10px">Para<select id="pf-vesp-modo"><option value="favoritos"' + (modo !== 'todos' ? ' selected' : '') + '>Só os favoritos</option><option value="todos"' + (modo === 'todos' ? ' selected' : '') + '>Todos os meus imóveis</option></select></label></span></div>'
     + '</fieldset>'
+    + '<fieldset><legend>Prazos de licitação e venda direta</legend>'
+    + '<p class="ajuda" style="margin:0 0 4px">Vale para imóveis dos seus alertas ou favoritos que tenham data ou prazo informado, mesmo sem favoritar. As buscas rodam às 10h, 15h e 20h, e os avisos saem nesses horários.</p>'
+    + [['lic_vespera', 'Licitação: 1 dia antes', 'Na busca das 20h.'], ['lic_dia', 'Licitação: no dia', 'Na busca das 10h, se a licitação for depois dela.'],
+       ['vd_3d', 'Venda direta: 3 dias antes do prazo', 'Na busca das 10h.'], ['vd_1d', 'Venda direta: 1 dia antes do prazo', 'Na busca das 10h.'],
+       ['vd_dia', 'Venda direta: no dia do prazo', 'Na busca das 10h e na última busca antes do fim.']].map(([k, t, d]) =>
+      '<label class="pref"><input type="checkbox" id="pf-pz-' + k + '"' + (!p.avisos_prazo || p.avisos_prazo[k] !== false ? ' checked' : '') + '><span><b>' + t + '</b><span>' + d + '</span></span></label>').join('')
+    + '</fieldset>'
     + '<fieldset><legend>Como receber</legend>'
     + '<label class="opcao' + (formato === 'individual' ? ' ativa' : '') + '"><input type="radio" name="formato" value="individual" data-acao="pf-formato"' + (formato === 'individual' ? ' checked' : '') + '><span><b>Uma mensagem por aviso</b><span>Bom para poucos alertas. Chega assim que a busca encontra.</span></span></label>'
     + '<label class="opcao' + (formato === 'resumo' ? ' ativa' : '') + '"><input type="radio" name="formato" value="resumo" data-acao="pf-formato"' + (formato === 'resumo' ? ' checked' : '') + '><span><b>Resumo único às 20h</b><span>Junta tudo do dia numa mensagem só. Lembretes de véspera continuam separados.</span></span></label>'
@@ -1469,6 +1704,9 @@ document.addEventListener('click', async (e) => {
     case 'ocultar-tg': localStorage.setItem('radar_ocultar_tg', '1'); render(); break;
     case 'abrir-notificacoes': abrirNotificacoes(); break;
     case 'abrir-perfil': abrirPerfil(); break;
+    case 'prazo': abrirPrazo(el.dataset.id); break;
+    case 'prazo-salvar': await salvarPrazo(); break;
+    case 'prazo-remover': await removerPrazo(); break;
     case 'perfil-salvar': {
       const nome = $('perfil-nome').value.trim();
       if (await salvarPerfil({ nome: nome || null }, nome ? 'Nome salvo.' : 'Nome removido.')) fecharModal();
@@ -1545,7 +1783,9 @@ document.addEventListener('click', async (e) => {
     case 'pf-salvar': {
       const vesp = $('pf-vesp').checked ? $('pf-vesp-modo').value : 'nao';
       const formato = (document.querySelector('input[name="formato"]:checked') || {}).value === 'resumo' ? 'resumo' : 'individual';
-      if (await salvarPerfil({ avisar_novo: $('pf-novo').checked, avisar_mudanca: $('pf-mud').checked, lembrete_vespera: vesp, formato_aviso: formato }, 'Preferências salvas.')) fecharModal();
+      const avisosPrazo = {};
+      ['lic_vespera', 'lic_dia', 'vd_3d', 'vd_1d', 'vd_dia'].forEach(k => { avisosPrazo[k] = $('pf-pz-' + k).checked; });
+      if (await salvarPerfil({ avisar_novo: $('pf-novo').checked, avisar_mudanca: $('pf-mud').checked, lembrete_vespera: vesp, formato_aviso: formato, avisos_prazo: avisosPrazo }, 'Preferências salvas.')) fecharModal();
       break;
     }
   }
@@ -1553,6 +1793,7 @@ document.addEventListener('click', async (e) => {
 
 document.addEventListener('change', (e) => {
   const t = e.target;
+  if (t.id === 'pz-data' || t.id === 'pz-hora') { atualizarPreviaPrazo(); return; }
   if (t.dataset.acao === 'sel') { t.checked ? S.sel.add(t.dataset.id) : S.sel.delete(t.dataset.id); render(); return; }
   if (t.dataset.acao === 'sel-grupo') { t.dataset.ids.split(',').forEach(id => t.checked ? S.sel.add(id) : S.sel.delete(id)); render(); return; }
   if (t.dataset.acao === 'pf-formato') {
@@ -1591,6 +1832,7 @@ document.addEventListener('change', (e) => {
 let buscaTimer = null;
 document.addEventListener('input', (e) => {
   const t = e.target;
+  if (t.id === 'pz-data' || t.id === 'pz-hora') { atualizarPreviaPrazo(); return; }
   if (t.id === 'busca') {
     S.busca = t.value; clearTimeout(buscaTimer);
     buscaTimer = setTimeout(() => { const pos = t.selectionStart; render(); const b = $('busca'); if (b) { b.focus(); b.setSelectionRange(pos, pos); } }, 250);
@@ -1663,6 +1905,7 @@ $('btn-mostrar-senha').addEventListener('click', () => {
   const { data } = await c.auth.getSession();
   if (data && data.session) await mostrarApp(data.session.user);
 })();
+
 </script>
 </body>
 </html>
