@@ -601,6 +601,7 @@ def carregar_perfis() -> dict[str, dict]:
             "avisar_mudanca": row.get("avisar_mudanca", True) is not False,
             "lembrete_vespera": row.get("lembrete_vespera") or "favoritos",
             "formato": row.get("formato_aviso") or "individual",
+            "avisos_prazo": preferencias_prazo(row.get("avisos_prazo")),
         }
     return perfis
 
@@ -1035,6 +1036,176 @@ def _buscar_imoveis_por_id(ids: list[str]) -> dict[str, dict]:
     return out
 
 
+# ------------------------------------------------- avisos de prazo (licitação aberta e venda direta/online)
+# O prazo é informado por quem usa o painel (tabela prazo_imovel, compartilhada). Os avisos saem
+# nos horários das 3 buscas (10h, 15h e 20h, Brasília): não há aviso no minuto exato.
+
+CHAVES_AVISO_PRAZO = ("lic_vespera", "lic_dia", "vd_3d", "vd_1d", "vd_dia")
+BUSCAS_DO_DIA = (10, 15, 20)
+DIAS_SEMANA = ("seg", "ter", "qua", "qui", "sex", "sáb", "dom")
+
+
+def preferencias_prazo(valor) -> dict[str, bool]:
+    """Tudo ligado, a menos que a pessoa tenha desligado um aviso."""
+    prefs = {k: True for k in CHAVES_AVISO_PRAZO}
+    if isinstance(valor, dict):
+        for k in CHAVES_AVISO_PRAZO:
+            if valor.get(k) is False:
+                prefs[k] = False
+    return prefs
+
+
+def chave_preferencia(tipo_aviso: str) -> str:
+    return "vd_dia" if tipo_aviso.startswith("vd_dia") else tipo_aviso
+
+
+def avisos_devidos(grupo: str, prazo: datetime, agora: datetime) -> list[str]:
+    """Qual aviso de prazo vale NESTA rodada (no máximo um). `grupo` é 'licitacao' ou 'direta'.
+    A deduplicação (não mandar duas vezes) fica por conta de quem chama."""
+    prazo = prazo.astimezone(FUSO_BRASILIA)
+    agora = agora.astimezone(FUSO_BRASILIA)
+    if prazo <= agora:
+        return []
+    dias = (prazo.date() - agora.date()).days
+    if grupo == "licitacao":
+        if dias == 1 and agora.hour >= 18:      # véspera: só na busca da noite
+            return ["lic_vespera"]
+        if dias == 0:                           # no dia: na primeira busca que ainda pega o prazo no futuro
+            return ["lic_dia"]
+        return []
+    if grupo == "direta":
+        if dias == 3:
+            return ["vd_3d"]
+        if dias == 1:
+            return ["vd_1d"]
+        if dias == 0:
+            minuto_prazo = prazo.hour * 60 + prazo.minute
+            buscas_antes = [h for h in BUSCAS_DO_DIA if h * 60 + 5 < minuto_prazo]
+            ultima = max(buscas_antes) if buscas_antes else None
+            if ultima is not None and ultima >= 15 and agora.hour >= ultima:
+                return ["vd_dia_b"]             # a última busca antes do fim
+            return ["vd_dia_a"]                 # a primeira busca do dia
+    return []
+
+
+def _hora_txt(dt: datetime) -> str:
+    return f"{dt.hour}h" + (f"{dt.minute:02d}" if dt.minute else "")
+
+
+def _dia_txt(dt: datetime) -> str:
+    return f"{DIAS_SEMANA[dt.weekday()]} {dt:%d/%m}"
+
+
+def faltam_txt(prazo: datetime, agora: datetime) -> str:
+    minutos = int((prazo - agora).total_seconds() // 60)
+    if minutos < 60:
+        m = max(5, int(round(minutos / 5.0)) * 5)
+        return f"Faltam cerca de {m} minutos."
+    horas = int(round(minutos / 60.0))
+    return "Falta cerca de 1 hora." if horas == 1 else f"Faltam cerca de {horas} horas."
+
+
+def texto_aviso_prazo(tipo_aviso: str, prazo: datetime, agora: datetime) -> tuple[str, str]:
+    """(título, linhas extras) da mensagem."""
+    prazo = prazo.astimezone(FUSO_BRASILIA)
+    agora = agora.astimezone(FUSO_BRASILIA)
+    dia, hora = _dia_txt(prazo), _hora_txt(prazo)
+    nota_lic = "<i>Data informada no Radar. Confira no edital.</i>"
+    nota_vd = "<i>Prazo informado no Radar. Confira na Caixa.</i>"
+    if tipo_aviso == "lic_vespera":
+        return "Licitação amanhã", f"Licitação: <b>{dia} às {hora}</b>.\n{nota_lic}"
+    if tipo_aviso == "lic_dia":
+        return "Licitação hoje", f"A licitação é <b>hoje, às {hora}</b>.\n{nota_lic}"
+    if tipo_aviso == "vd_3d":
+        return "Prazo final em 3 dias", f"Venda direta até <b>{dia} às {hora}</b>.\n{nota_vd}"
+    if tipo_aviso == "vd_1d":
+        return "Prazo final amanhã", f"Venda direta encerra <b>amanhã, às {hora}</b>.\n{nota_vd}"
+    return "Prazo final hoje", f"Venda direta encerra <b>hoje, às {hora}</b>.\n{faltam_txt(prazo, agora)}\n{nota_vd}"
+
+
+def _parse_iso(txt) -> datetime:
+    return datetime.fromisoformat(str(txt).replace("Z", "+00:00"))
+
+
+def enviar_avisos_de_prazo(perfis: dict, interesses: dict, por_usuario: dict, agora_local: datetime) -> None:
+    """Quem recebe: quem tem o imóvel nos favoritos ou nos alertas ativos (e não marcou 'sem interesse').
+    Vale para favoritos e não favoritos. Não passa pelo resumo das 20h: aviso de prazo é na hora."""
+    agora = agora_local
+    try:
+        linhas = _get_json("prazo_imovel", {
+            "select": "imovel_id,data_hora",
+            "data_hora": f"gt.{(agora - timedelta(hours=1)).astimezone(timezone.utc).isoformat()}",
+        })
+    except Exception as exc:  # noqa: BLE001
+        print(f"aviso: não consegui ler os prazos informados ({exc})", file=sys.stderr)
+        return
+    prazos: dict[str, datetime] = {}
+    for r in linhas:
+        try:
+            prazo = _parse_iso(r["data_hora"]).astimezone(FUSO_BRASILIA)
+        except Exception:  # noqa: BLE001
+            continue
+        if timedelta(0) < prazo - agora <= timedelta(days=5):
+            prazos[r["imovel_id"]] = prazo
+    if not prazos:
+        print("Telegram: 0 aviso(s) de prazo enviado(s).")
+        return
+
+    candidatos: list[tuple[str, str]] = []
+    for user_id in perfis:
+        inter = interesses.get(user_id, {})
+        ids = {i for i, r in inter.items() if r.get("favorito")} | set(por_usuario.get(user_id, {}).keys())
+        candidatos += [(user_id, i) for i in sorted(ids & prazos.keys())]
+    if not candidatos:
+        print("Telegram: 0 aviso(s) de prazo enviado(s).")
+        return
+
+    imoveis = _buscar_imoveis_por_id(sorted(prazos))
+    try:
+        enviados = {(r["user_id"], r["imovel_id"], r["chave"]) for r in _get_json("aviso_prazo_enviado", {
+            "imovel_id": f"in.({','.join(sorted(prazos))})", "select": "user_id,imovel_id,chave"})}
+    except Exception as exc:  # noqa: BLE001
+        print(f"aviso: não consegui ler os avisos de prazo já enviados ({exc}); não envio nada para não repetir.", file=sys.stderr)
+        return
+
+    total = 0
+    registros: list[dict] = []
+    for user_id, imovel_id in candidatos:
+        im = imoveis.get(imovel_id)
+        if not im:
+            continue
+        grupo = grupo_modalidade(im.get("modalidade"))
+        if grupo not in ("licitacao", "direta"):
+            continue
+        inter = interesses.get(user_id, {})
+        if silenciado(inter.get(imovel_id), im):
+            continue
+        prazo, perfil = prazos[imovel_id], perfis[user_id]
+        sufixo = prazo.astimezone(timezone.utc).strftime("%Y%m%dT%H%M")
+        for tipo in avisos_devidos(grupo, prazo, agora):
+            if not perfil["avisos_prazo"].get(chave_preferencia(tipo), True):
+                continue
+            chave = f"{tipo}:{sufixo}"
+            if (user_id, imovel_id, chave) in enviados:
+                continue
+            fav = bool(inter.get(imovel_id, {}).get("favorito"))
+            titulo, extra = texto_aviso_prazo(tipo, prazo, agora)
+            texto, botoes = montar_mensagem(im, titulo, fav, imovel_id, extra, mostrar_pracas=False)
+            if enviar_telegram(perfil["chat_id"], texto, botoes):
+                total += 1
+                registros.append({"user_id": user_id, "imovel_id": imovel_id, "chave": chave})
+                if tipo == "vd_dia_b":   # se a fase da manhã não saiu, esta mensagem cobre as duas
+                    registros.append({"user_id": user_id, "imovel_id": imovel_id, "chave": f"vd_dia_a:{sufixo}"})
+            time.sleep(1)
+    if registros:
+        resp = requests.post(f"{SUPABASE_URL}/rest/v1/aviso_prazo_enviado",
+                             headers={**HEADERS_SB, "Prefer": "resolution=ignore-duplicates,return=minimal"},
+                             json=registros, timeout=30)
+        if not resp.ok:
+            print(f"aviso: não consegui registrar os avisos de prazo enviados: {resp.status_code} {resp.text[:200]}", file=sys.stderr)
+    print(f"Telegram: {total} aviso(s) de prazo enviado(s).")
+
+
 def enfileirar_avisos(linhas: list[dict]) -> bool:
     resp = requests.post(f"{SUPABASE_URL}/rest/v1/aviso_pendente",
                          headers={**HEADERS_SB, "Prefer": "return=minimal"}, json=linhas, timeout=30)
@@ -1187,6 +1358,9 @@ def enviar_avisos_e_lembretes(filtros, chaves_por_filtro, resultados_por_chave, 
 
     # 1b) resumo único — vai na busca da noite (ou se algo ficou parado por mais de 20 h)
     enviar_resumos(perfis, interesses, agora_local)
+
+    # 1c) prazos informados (licitação aberta e venda direta/online): sempre na hora, nunca no resumo
+    enviar_avisos_de_prazo(perfis, interesses, por_usuario, agora_local)
 
     # 2) lembrete na véspera — só na busca da noite (18h em diante, horário de Brasília)
     if agora_local.hour < 18:
