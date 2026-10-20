@@ -311,6 +311,19 @@ def extrair_cep(texto: str) -> str | None:
     return f"{m.group(1)}-{m.group(2)}" if m else None
 
 
+def extrair_data_licitacao(texto: str) -> str | None:
+    """'Data da Licitação Aberta - 29/10/2026 - 10h00' -> instante em UTC (ISO). O horário da Caixa é de
+    Brasília. Sem a hora na página, não vale: devolve None em vez de chutar um horário."""
+    m = re.search(r"Data da Licita[çc][ãa]o(?:\s+Aberta)?\s*-?\s*(\d{2})/(\d{2})/(\d{4})\s*-?\s*(\d{1,2})\s*h\s*(\d{2})?", texto, re.I)
+    if not m:
+        return None
+    try:
+        dt = datetime(int(m.group(3)), int(m.group(2)), int(m.group(1)), int(m.group(4)), int(m.group(5) or 0), tzinfo=FUSO_BRASILIA)
+    except ValueError:
+        return None
+    return dt.astimezone(timezone.utc).isoformat()
+
+
 def buscar_detalhe(numero_imovel: str) -> dict:
     """Busca a página individual do imóvel e tenta extrair 1º/2º leilão, matrícula,
     comarca, edital, leiloeiro e foto. Best-effort: campo que não achar fica None."""
@@ -371,7 +384,8 @@ def buscar_detalhe(numero_imovel: str) -> dict:
             or buscar(r"\bIPTU[:\s]*([^\n]{1,40}?)(?:\s{2,}|\n)"),
         "comarca": buscar(r"Comarca[:\s]*([^\n]{1,60}?)\s+Of[íi]cio"),
         "edital": buscar(r"\bEdital[:\s]*([^\n]{1,40}?)\s+N[úu]mero do item"),
-        "leiloeiro": buscar(r"Leiloeiro\(a\)[:\s]*([^\n]{1,60}?)\s+Data do 1"),
+        "leiloeiro": buscar(r"Leiloeiro\(a\)[:\s]*([^\n]{1,60}?)\s+Data d[oa]"),
+        "_prazo_lido": extrair_data_licitacao(texto),   # só em licitação aberta; não vai pra tabela imoveis
         "foto_url": foto.group(1) if foto else None,
     }
 
@@ -908,7 +922,7 @@ def executar(args, problemas: list[tuple[str, str]]) -> dict:
             (anterior.get("modalidade") or "") != (im.get("modalidade") or "")
             or round(float(anterior.get("preco") or 0), 2) != round(float(im.get("preco") or 0), 2)
         )
-        if im["_eh_novo"] or im["_mudou"] or args.atualizar_detalhes:
+        if im["_eh_novo"] or im["_mudou"] or args.atualizar_detalhes or grupo_modalidade(im.get("modalidade")) == "licitacao":
             alvo_detalhe.append(im)
         elif anterior:
             for campo in CAMPOS_DETALHE:
@@ -919,8 +933,8 @@ def executar(args, problemas: list[tuple[str, str]]) -> dict:
         if args.atualizar_detalhes:
             print(f"Relendo o detalhe de TODOS os {len(alvo_detalhe)} imóveis dos alertas (atualização forçada, sem avisos extras)...")
         else:
-            print(f"Buscando detalhe individual de {len(alvo_detalhe)} imóveis novos ou com modalidade/preço "
-                  f"diferentes de antes (os que não mudaram reaproveitam o que já tínhamos)...")
+            print(f"Buscando detalhe individual de {len(alvo_detalhe)} imóveis novos, com modalidade/preço diferentes de antes "
+                  f"ou em licitação aberta (a data pode mudar). Os demais reaproveitam o que já tínhamos...")
         erros_detalhe = 0
         for i, im in enumerate(alvo_detalhe, start=1):
             print(f"  [{i}/{len(alvo_detalhe)}] imóvel nº {im['numero_imovel']}...")
@@ -997,6 +1011,10 @@ def executar(args, problemas: list[tuple[str, str]]) -> dict:
     # antigas de cada filtro pelas atuais (assim, quem deixou de bater some
     # sozinho, mesmo sem "excluir" nada manualmente)
     ids_por_chave = buscar_ids_imoveis(ufs) if ufs else {}
+    try:
+        gravar_prazos_lidos(resultados_por_chave, ids_por_chave)
+    except Exception as exc:  # noqa: BLE001
+        print(f"aviso: falha ao gravar os prazos lidos da Caixa: {exc}", file=sys.stderr)
     total_associacoes = 0
     for f in filtros:
         limpar_associacoes_filtro(f["id"])
@@ -1105,13 +1123,14 @@ def faltam_txt(prazo: datetime, agora: datetime) -> str:
     return "Falta cerca de 1 hora." if horas == 1 else f"Faltam cerca de {horas} horas."
 
 
-def texto_aviso_prazo(tipo_aviso: str, prazo: datetime, agora: datetime) -> tuple[str, str]:
+def texto_aviso_prazo(tipo_aviso: str, prazo: datetime, agora: datetime, origem: str = "manual") -> tuple[str, str]:
     """(título, linhas extras) da mensagem."""
     prazo = prazo.astimezone(FUSO_BRASILIA)
     agora = agora.astimezone(FUSO_BRASILIA)
     dia, hora = _dia_txt(prazo), _hora_txt(prazo)
-    nota_lic = "<i>Data informada no Radar. Confira no edital.</i>"
-    nota_vd = "<i>Prazo informado no Radar. Confira na Caixa.</i>"
+    lida = origem == "caixa"
+    nota_lic = "<i>Data lida da página da Caixa. Confira no edital.</i>" if lida else "<i>Data informada no Radar. Confira no edital.</i>"
+    nota_vd = "<i>Prazo lido da página da Caixa. Confira na Caixa.</i>" if lida else "<i>Prazo informado no Radar. Confira na Caixa.</i>"
     if tipo_aviso == "lic_vespera":
         return "Licitação amanhã", f"Licitação: <b>{dia} às {hora}</b>.\n{nota_lic}"
     if tipo_aviso == "lic_dia":
@@ -1131,14 +1150,16 @@ def enviar_avisos_de_prazo(perfis: dict, interesses: dict, por_usuario: dict, ag
     """Quem recebe: quem tem o imóvel nos favoritos ou nos alertas ativos (e não marcou 'sem interesse').
     Vale para favoritos e não favoritos. Não passa pelo resumo das 20h: aviso de prazo é na hora."""
     agora = agora_local
+    filtro_data = f"gt.{(agora - timedelta(hours=1)).astimezone(timezone.utc).isoformat()}"
     try:
-        linhas = _get_json("prazo_imovel", {
-            "select": "imovel_id,data_hora",
-            "data_hora": f"gt.{(agora - timedelta(hours=1)).astimezone(timezone.utc).isoformat()}",
-        })
+        try:
+            linhas = _get_json("prazo_imovel", {"select": "imovel_id,data_hora,origem", "data_hora": filtro_data})
+        except Exception:  # noqa: BLE001 — coluna "origem" ainda não existe (migração v8 não rodada): segue sem ela
+            linhas = _get_json("prazo_imovel", {"select": "imovel_id,data_hora", "data_hora": filtro_data})
     except Exception as exc:  # noqa: BLE001
         print(f"aviso: não consegui ler os prazos informados ({exc})", file=sys.stderr)
         return
+    origens = {r["imovel_id"]: (r.get("origem") or "manual") for r in linhas}
     prazos: dict[str, datetime] = {}
     for r in linhas:
         try:
@@ -1189,7 +1210,7 @@ def enviar_avisos_de_prazo(perfis: dict, interesses: dict, por_usuario: dict, ag
             if (user_id, imovel_id, chave) in enviados:
                 continue
             fav = bool(inter.get(imovel_id, {}).get("favorito"))
-            titulo, extra = texto_aviso_prazo(tipo, prazo, agora)
+            titulo, extra = texto_aviso_prazo(tipo, prazo, agora, origens.get(imovel_id, "manual"))
             texto, botoes = montar_mensagem(im, titulo, fav, imovel_id, extra, mostrar_pracas=False)
             if enviar_telegram(perfil["chat_id"], texto, botoes):
                 total += 1
@@ -1204,6 +1225,44 @@ def enviar_avisos_de_prazo(perfis: dict, interesses: dict, por_usuario: dict, ag
         if not resp.ok:
             print(f"aviso: não consegui registrar os avisos de prazo enviados: {resp.status_code} {resp.text[:200]}", file=sys.stderr)
     print(f"Telegram: {total} aviso(s) de prazo enviado(s).")
+
+
+def gravar_prazos_lidos(resultados_por_chave: dict, ids_por_chave: dict) -> int:
+    """Grava em prazo_imovel o prazo lido da página da Caixa (origem 'caixa'). Prazo informado à mão
+    (origem 'manual') nunca é sobrescrito; prazo igual ao que já está salvo não é regravado."""
+    candidatos: dict[str, str] = {}
+    for chave, im in resultados_por_chave.items():
+        iso, imovel_id = im.get("_prazo_lido"), ids_por_chave.get(chave)
+        if iso and imovel_id:
+            candidatos[imovel_id] = iso
+    if not candidatos:
+        return 0
+    existentes: dict[str, dict] = {}
+    ids = sorted(candidatos)
+    try:
+        for i in range(0, len(ids), 80):
+            for r in _get_json("prazo_imovel", {"imovel_id": f"in.({','.join(ids[i:i + 80])})", "select": "imovel_id,data_hora,origem"}):
+                existentes[r["imovel_id"]] = r
+    except Exception as exc:  # noqa: BLE001
+        print(f"aviso: não consegui conferir os prazos já salvos ({exc}). Rode a migração v8 no Supabase?", file=sys.stderr)
+        return 0
+    agora_iso = datetime.now(timezone.utc).isoformat()
+    novos = []
+    for imovel_id, iso in candidatos.items():
+        atual = existentes.get(imovel_id)
+        if atual and (atual.get("origem") or "manual") == "manual":
+            continue
+        if atual and _parse_iso(atual["data_hora"]) == _parse_iso(iso):
+            continue
+        novos.append({"imovel_id": imovel_id, "data_hora": iso, "origem": "caixa", "atualizado_em": agora_iso, "atualizado_por": None})
+    if novos:
+        resp = requests.post(f"{SUPABASE_URL}/rest/v1/prazo_imovel", headers={**HEADERS_SB, "Prefer": "resolution=merge-duplicates,return=minimal"},
+                             params={"on_conflict": "imovel_id"}, json=novos, timeout=30)
+        if not resp.ok:
+            print(f"aviso: não consegui gravar os prazos lidos da Caixa: {resp.status_code} {resp.text[:200]}", file=sys.stderr)
+            return 0
+    print(f"Prazos lidos da página da Caixa: {len(candidatos)} encontrado(s), {len(novos)} gravado(s) ou atualizado(s).")
+    return len(novos)
 
 
 def enfileirar_avisos(linhas: list[dict]) -> bool:
