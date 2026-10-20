@@ -734,7 +734,7 @@ async function carregarTudo() {
     lerComRetry(() => sb.from('perfil_usuario').select('*').maybeSingle()),
     lerComRetry(() => sb.from('custo_imovel').select('*')),
     lerComRetry(() => sb.from('status_execucao').select('*').order('executado_em', { ascending: false }).limit(12)),
-    lerComRetry(() => sb.from('prazo_imovel').select('imovel_id,data_hora')),
+    lerComRetry(() => sb.from('prazo_imovel').select('imovel_id,data_hora,origem')),
   ]);
   // Leitura que falhou NÃO apaga o que já estava na tela, e o painel não afirma que "não há nada":
   // marca a falha pra mostrar um aviso em vez de um estado vazio enganoso.
@@ -746,7 +746,7 @@ async function carregarTudo() {
   if (!rs.error) S.status = rs.data || [];
   if (!rz.error) {   // prazos informados (licitação aberta e venda direta/online), compartilhados entre os usuários
     S.prazos = {};
-    (rz.data || []).forEach(p => { const ms = Date.parse(p.data_hora); if (!isNaN(ms)) S.prazos[p.imovel_id] = { ms }; });
+    (rz.data || []).forEach(p => { const ms = Date.parse(p.data_hora); if (!isNaN(ms)) S.prazos[p.imovel_id] = { ms, origem: p.origem || 'manual' }; });
   }
   // não esconder falha de leitura: se uma tabela não carrega, o painel avisa qual
   S.erros = [];
@@ -811,7 +811,7 @@ function renderStatus() {
     const semTabela = S.erros.some(e => /does not exist|42P01|schema cache/i.test(e));
     const dica = semPermissao
       ? 'Falta liberar a tabela no Supabase (arquivo liberar_acesso.sql).'
-      : semTabela ? 'Falta rodar a migração mais recente do banco (pasta sql, arquivo migracao_v7.sql).'
+      : semTabela ? 'Falta rodar a migração mais recente do banco (pasta sql, arquivo da migração mais recente, hoje a migracao_v8.sql).'
       : 'Costuma passar sozinho: tente de novo. Se continuar, avise o administrador do sistema.';
     faixas += '<section class="faixa faixa-aviso" role="alert">' + ICONES.aviso + '<p><b>Parte dos dados não carregou.</b> ' + esc(S.erros.join(' | '))
       + '. ' + dica + '</p><button class="btn btn-sec" data-acao="recarregar">Tentar de novo</button></section>';
@@ -1035,11 +1035,12 @@ function htmlPrazo(im, g) {
   const lic = g === 'licitacao', ms = prazoDe(im);
   const mod = '<p class="mod">' + esc(im.modalidade || (lic ? 'Licitação aberta' : 'Venda direta (online)')) + '</p>';
   if (!ms) {
-    const t = lic ? ['Data da licitação não informada', 'O sistema não consegue ler essa data. Informe para vê-la aqui e ver na agenda.', 'Informar data e hora']
+    const t = lic ? ['Data da licitação não informada', 'O sistema ainda não leu essa data na página da Caixa. Informe para vê-la aqui e na agenda.', 'Informar data e hora']
                   : ['Prazo final não informado', 'Informe o prazo para ver o cronômetro e receber avisos antes de encerrar.', 'Informar prazo final'];
     return '<div class="pz">' + mod + '<div class="pz-vazio"><div class="txt"><b>' + t[0] + '</b><span>' + t[1] + '</span></div>'
       + '<button class="btn btn-sec btn-azul-contorno" data-acao="prazo" data-id="' + im.id + '">' + ICONES.calendario + t[2] + '</button></div></div>';
   }
+  const lida = (S.prazos[im.id] || {}).origem === 'caixa';
   const e = estadoPrazo(g, ms, Date.now());
   const dataTxt = brDiaMes(ms) + ' às ' + brHora(ms);
   const badge = '<span class="pz-badge ' + e.bclasse + '">' + esc(e.badge) + '</span>';
@@ -1049,7 +1050,7 @@ function htmlPrazo(im, g) {
   if (lic) {
     return '<div class="pz">' + mod + '<div class="pz-bloco tom-' + e.tom + '" data-alvo="' + ms + '" data-grupo="licitacao">'
       + '<div class="pz-info"><div class="pz-linha1"><span class="pz-rot">Licitação, ' + dataTxt + '</span>' + badge + '</div>'
-      + '<span class="pz-nota">Data informada no Radar. Confira no edital da Caixa.</span></div>' + acao + '</div></div>';
+      + '<span class="pz-nota">' + (lida ? 'Data lida da página da Caixa. Confira no edital.' : 'Data informada no Radar. Confira no edital da Caixa.') + '</span></div>' + acao + '</div></div>';
   }
   return '<div class="pz">' + mod + '<div class="pz-bloco tom-' + e.tom + '" data-alvo="' + ms + '" data-grupo="direta" role="timer" aria-live="off" aria-label="Prazo final: ' + dataTxt + '">'
     + '<div class="pz-info"><div class="pz-linha1">' + ICONES.ampulheta + '<span class="pz-rot">' + (e.tom === 'fim' ? 'Prazo final encerrado' : 'Prazo final da venda direta') + '</span>' + badge + '</div>'
@@ -1563,6 +1564,7 @@ function abrirPrazo(id) {
   const im = S.imoveis.find(x => x.id === id), g = im && grupoPrazo(im);
   if (!g) return;
   const lic = g === 'licitacao', ms = prazoDe(im), agora = Date.now();
+  const daCaixa = !!ms && (S.prazos[id] || {}).origem === 'caixa';
   prazoAtual = { id, g };
   const base = ms || (lic ? brEm(5, 10, 0, agora) : brEm(9, 23, 59, agora));
   const endereco = (im.empreendimento ? im.empreendimento + ', ' : '') + (im.endereco || '');
@@ -1572,11 +1574,12 @@ function abrirPrazo(id) {
     + '<div class="pz-campos"><label class="campo">Data<input type="date" id="pz-data" value="' + brIsoData(base) + '"></label>'
     + '<label class="campo">Hora<input type="time" id="pz-hora" value="' + brIsoHora(base) + '"></label></div>'
     + '<p class="ajuda">Horário de Brasília. Digite ou escolha no calendário. Vale para todos que acompanham este imóvel.</p>'
+    + (daCaixa ? '<div class="pz-msg aviso" role="status">' + ICONES.aviso + '<span>Esta data foi lida da página da Caixa. Se você mudar, o sistema passa a usar a sua data e não a atualiza mais sozinho.</span></div>' : '')
     + '<div id="pz-feedback"></div>'
     + '<div class="pz-avisos"><b>Avisos no Telegram.</b> '
     + (lic ? 'Você recebe um aviso na véspera (busca das 20h) e outro no dia da licitação (busca das 10h).' : 'Você recebe um aviso 3 dias antes, 1 dia antes e no dia do prazo.')
     + ' <button type="button" class="btn btn-texto" data-acao="abrir-notificacoes">Mudar avisos</button></div></div>'
-    + '<div class="modal-rodape">' + (ms ? '<button type="button" class="btn btn-texto" style="color:var(--vermelho);margin-right:auto" data-acao="prazo-remover">Remover data</button>' : '')
+    + '<div class="modal-rodape">' + (ms && !daCaixa ? '<button type="button" class="btn btn-texto" style="color:var(--vermelho);margin-right:auto" data-acao="prazo-remover">Remover data</button>' : '')
     + '<button type="button" class="btn btn-sec btn-lg" data-acao="fechar-modal">Cancelar</button>'
     + '<button type="button" class="btn btn-pri btn-lg" id="pz-salvar" data-acao="prazo-salvar">Salvar</button></div>');
   atualizarPreviaPrazo();
@@ -1586,9 +1589,9 @@ async function salvarPrazo() {
   const ms = lerPrazoModal();
   if (!ms || ms <= Date.now()) { atualizarPreviaPrazo(); return; }
   const { id, g } = prazoAtual;
-  const { error } = await sb.from('prazo_imovel').upsert({ imovel_id: id, data_hora: new Date(ms).toISOString(), atualizado_em: new Date().toISOString() }, { onConflict: 'imovel_id' });
+  const { error } = await sb.from('prazo_imovel').upsert({ imovel_id: id, data_hora: new Date(ms).toISOString(), origem: 'manual', atualizado_em: new Date().toISOString() }, { onConflict: 'imovel_id' });
   if (error) { toast('Não foi possível salvar o prazo: ' + error.message); return; }
-  S.prazos[id] = { ms };
+  S.prazos[id] = { ms, origem: 'manual' };
   fecharModal(); render();
   toast(g === 'licitacao' ? 'Data da licitação salva.' : 'Prazo final salvo.');
 }
@@ -1600,7 +1603,7 @@ async function removerPrazo() {
   delete S.prazos[id];
   fecharModal(); render();
   toast('Data removida.', anterior ? async () => {
-    const r = await sb.from('prazo_imovel').upsert({ imovel_id: id, data_hora: new Date(anterior.ms).toISOString(), atualizado_em: new Date().toISOString() }, { onConflict: 'imovel_id' });
+    const r = await sb.from('prazo_imovel').upsert({ imovel_id: id, data_hora: new Date(anterior.ms).toISOString(), origem: anterior.origem || 'manual', atualizado_em: new Date().toISOString() }, { onConflict: 'imovel_id' });
     if (r.error) { toast('Não foi possível desfazer: ' + r.error.message); return; }
     S.prazos[id] = anterior; render();
   } : null);
