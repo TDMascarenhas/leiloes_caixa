@@ -1499,6 +1499,20 @@ def carregar_ultimo_status() -> dict | None:
         return None
 
 
+def busca_recente(minutos: int = 50) -> bool:
+    """Já houve uma busca terminada (ok ou parcial) nos últimos `minutos`? Só os agendamentos de RESERVA
+    usam isto: se a principal do horário já rodou, a reserva não repete o trabalho. Se não der pra
+    conferir, devolve False (melhor rodar do que ficar sem busca)."""
+    desde = (datetime.now(timezone.utc) - timedelta(minutes=minutos)).isoformat()
+    try:
+        linhas = _get_json("status_execucao", {"select": "executado_em", "status": "in.(ok,parcial)",
+                                               "executado_em": f"gte.{desde}", "limit": "1"})
+    except Exception as exc:  # noqa: BLE001
+        print(f"aviso: não consegui conferir se a busca já rodou ({exc}); vou rodar.", file=sys.stderr)
+        return False
+    return bool(linhas)
+
+
 def registrar_status(status: str, assinatura: str | None, detalhes: str | None) -> None:
     try:
         requests.post(f"{SUPABASE_URL}/rest/v1/status_execucao",
@@ -1528,6 +1542,11 @@ def main() -> int:
                          help="relê a página de detalhe de TODOS os imóveis dos alertas, sem gerar avisos "
                               "(útil uma vez, depois de melhorar a leitura da página)")
     args = parser.parse_args()
+
+    # Agendamento de reserva (30 min depois do principal): só busca se a principal não rodou.
+    if os.environ.get("RADAR_RESERVA") == "sim" and busca_recente(50):
+        print("Agendamento de reserva: a busca principal deste horário já rodou há menos de 50 minutos. Nada a fazer.")
+        return 0
 
     ultimo = carregar_ultimo_status()
     problemas: list[tuple[str, str]] = []
