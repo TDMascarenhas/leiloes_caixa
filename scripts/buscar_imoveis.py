@@ -1499,14 +1499,23 @@ def carregar_ultimo_status() -> dict | None:
         return None
 
 
-def busca_recente(minutos: int = 50) -> bool:
-    """Já houve uma busca terminada (ok ou parcial) nos últimos `minutos`? Só os agendamentos de RESERVA
-    usam isto: se a principal do horário já rodou, a reserva não repete o trabalho. Se não der pra
-    conferir, devolve False (melhor rodar do que ficar sem busca)."""
-    desde = (datetime.now(timezone.utc) - timedelta(minutes=minutos)).isoformat()
+def inicio_do_ultimo_horario(agora: datetime) -> datetime:
+    """O horário fixo de busca (10h, 15h ou 20h de Brasília) mais recente que já passou, menos 10 minutos de folga."""
+    agora = agora.astimezone(FUSO_BRASILIA)
+    candidatos = []
+    for dias in (0, -1):
+        base = (agora + timedelta(days=dias)).replace(minute=0, second=0, microsecond=0)
+        candidatos += [base.replace(hour=h) for h in BUSCAS_DO_DIA]
+    return max(c for c in candidatos if c <= agora) - timedelta(minutes=10)
+
+
+def busca_desde(inicio: datetime) -> bool:
+    """Já houve uma busca terminada (ok ou parcial) desde `inicio`? Só os disparos de RESERVA usam isto: se a
+    busca principal do horário já rodou, a reserva não repete o trabalho, por mais que o GitHub a atrase.
+    Se não der pra conferir, devolve False (melhor rodar do que ficar sem busca)."""
     try:
         linhas = _get_json("status_execucao", {"select": "executado_em", "status": "in.(ok,parcial)",
-                                               "executado_em": f"gte.{desde}", "limit": "1"})
+                                               "executado_em": f"gte.{inicio.astimezone(timezone.utc).isoformat()}", "limit": "1"})
     except Exception as exc:  # noqa: BLE001
         print(f"aviso: não consegui conferir se a busca já rodou ({exc}); vou rodar.", file=sys.stderr)
         return False
@@ -1543,9 +1552,9 @@ def main() -> int:
                               "(útil uma vez, depois de melhorar a leitura da página)")
     args = parser.parse_args()
 
-    # Agendamento de reserva (30 min depois do principal): só busca se a principal não rodou.
-    if os.environ.get("RADAR_RESERVA") == "sim" and busca_recente(50):
-        print("Agendamento de reserva: a busca principal deste horário já rodou há menos de 50 minutos. Nada a fazer.")
+    # Disparo de reserva (Supabase 15 min depois, ou agendador do GitHub): só busca se a principal não rodou.
+    if os.environ.get("RADAR_RESERVA") == "sim" and busca_desde(inicio_do_ultimo_horario(datetime.now(FUSO_BRASILIA))):
+        print("Disparo de reserva: a busca principal deste horário já rodou. Nada a fazer.")
         return 0
 
     ultimo = carregar_ultimo_status()
