@@ -2,20 +2,20 @@ name: Atualizar Radar de Leilões Caixa
 
 on:
   schedule:
-    # Horários em Brasília (UTC-3). O GitHub Actions usa UTC (por isso 13h = 10h) e NÃO garante o minuto:
-    # em horários de pico, no começo de cada hora, ele atrasa e até descarta agendamentos. Por isso as buscas
-    # saem nos minutos 7 (principal) e 37 (reserva), fora do pico. A reserva só busca se a principal
-    # não rodou (o robô confere, ver RADAR_RESERVA abaixo).
-    - cron: "7 13 * * *"    # 10:07 principal
-    - cron: "37 13 * * *"   # 10:37 reserva
-    - cron: "7 18 * * *"    # 15:07 principal
-    - cron: "37 18 * * *"   # 15:37 reserva
-    - cron: "7 23 * * *"    # 20:07 principal (é nesta que saem os lembretes de véspera e o resumo do dia)
-    - cron: "37 23 * * *"   # 20:37 reserva
-  workflow_dispatch:       # permite rodar manualmente pela aba "Actions" no GitHub
+    # O agendador do GitHub NÃO é confiável: atrasa horas e às vezes não dispara. O disparo principal vem do
+    # Supabase Cron, na hora exata (ver sql/agendar_buscas.sql). Estes 3 são só a última reserva: só buscam se
+    # a busca do horário não rodou (o robô confere, ver RADAR_RESERVA abaixo). Horários de Brasília (UTC-3).
+    - cron: "37 13 * * *"   # 10:37
+    - cron: "37 18 * * *"   # 15:37
+    - cron: "37 23 * * *"   # 20:37
+  workflow_dispatch:       # disparo manual (aba "Actions") e disparo do Supabase Cron
     inputs:
       atualizar_detalhes:
         description: "Reler a página de detalhe de TODOS os imóveis (marque uma vez depois de uma melhoria na leitura)"
+        type: boolean
+        default: false
+      reserva:
+        description: "Uso interno: disparo de reserva (só busca se a principal do horário não rodou)"
         type: boolean
         default: false
 
@@ -47,7 +47,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_ADMIN_CHAT_ID: ${{ secrets.TELEGRAM_ADMIN_CHAT_ID }}
           PAINEL_URL: ${{ vars.PAINEL_URL }}
-          RADAR_RESERVA: ${{ startsWith(github.event.schedule, '37 ') && 'sim' || 'nao' }}
+          RADAR_RESERVA: ${{ (github.event_name == 'schedule' || inputs.reserva) && 'sim' || 'nao' }}
         run: python scripts/buscar_imoveis.py ${{ inputs.atualizar_detalhes && '--atualizar-detalhes' || '' }}
 
       # Rede de segurança: se algo quebrou antes do próprio robô conseguir
