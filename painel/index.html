@@ -217,6 +217,14 @@
   .pz-msg{display:flex;gap:10px;align-items:flex-start;border-radius:10px;padding:10px 14px;font-size:14px;margin-top:12px;}
   .pz-msg.erro{background:#FDECEA;border:1px solid #E7A39D;color:#8C1D18;} .pz-msg.aviso{background:#FFF4DE;border:1px solid #F2C46B;color:#3D2600;}
   .pz-avisos{background:#F7F9FB;border:1px solid #E3E8EF;border-radius:10px;padding:10px 14px;font-size:13px;color:#3E4A5C;line-height:1.45;margin-top:12px;}
+  .faixa-critica{background:#FDECEA;border-color:#E7A39D;color:#8C1D18;}
+  .faixa-critica svg{color:#B3261E;}
+  .passos{margin:12px 0 0;padding-left:22px;display:flex;flex-direction:column;gap:12px;font-size:14px;color:#3E4A5C;line-height:1.5;}
+  .passos b{color:var(--azul-escuro);}
+  .codigo{display:flex;gap:8px;align-items:flex-start;background:#0F1B2D;color:#E6EEF8;border-radius:10px;padding:10px 12px;margin-top:6px;}
+  .codigo code{flex:1;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.5;word-break:break-word;}
+  .codigo button{flex-shrink:0;}
+  .dica-erro{background:#FFF4DE;border:1px solid #F2C46B;border-radius:10px;padding:10px 14px;font-size:14px;color:#3D2600;margin-top:12px;}
   .ag-chip{display:inline-flex;align-items:center;font-size:11px;font-weight:700;border-radius:20px;padding:1px 8px;margin-left:6px;}
   .ag-leilao{background:#E8F0FA;color:#164F8F;} .ag-lic{background:#E8ECF1;color:#3E4A5C;} .ag-prazo{background:#FFE3A8;color:#6B3A00;}
   .praca.atual{border:2px solid var(--azul);padding:9px 11px;}
@@ -680,6 +688,31 @@ function estadoPrazo(g, ms, agora) {
   return { tom, badge, bclasse: 'b-' + tom, relogio: brRelogio(ms, agora) };
 }
 
+// ---------------- disparo da busca no horário exato (Supabase Cron) e token do GitHub ----------------
+function brDataCompleta(ms) { const d = brD(ms); return pad2(d.getUTCDate()) + '/' + pad2(d.getUTCMonth() + 1) + '/' + d.getUTCFullYear(); }
+// Aparece para todos os usuários (quem não criou o token avisa quem criou). Sem a tabela disparo_estado
+// (agendar_buscas.sql não rodado) não há aviso nenhum.
+function estadoToken(agora) {
+  const d = S.disparo;
+  if (!d) return null;
+  agora = agora == null ? Date.now() : agora;
+  const exp = d.token_expira_em ? Date.parse(d.token_expira_em) : null, st = d.ultimo_status;
+  if (st === 401 || st === 403 || (exp && exp <= agora)) {
+    return { tipo: 'vencido', nivel: 'verm', exp, botao: 'Ver como renovar',
+      texto: 'O token do GitHub venceu ou foi recusado. As buscas voltaram a depender do agendador do GitHub, que atrasa por horas. Renove agora.' };
+  }
+  if (st != null && (st >= 400 || st === 0)) {
+    return { tipo: 'erro', nivel: 'verm', codigo: st, exp, botao: 'Ver como resolver',
+      texto: st === 0 ? 'O disparo automático da busca não obteve resposta do GitHub.' : 'O disparo automático da busca falhou (o GitHub respondeu ' + st + ').' };
+  }
+  if (exp && exp - agora <= 30 * 86400000) {
+    const dias = Math.max(1, Math.ceil((exp - agora) / 86400000));
+    return { tipo: 'vencendo', nivel: 'ambar', dias, exp, botao: 'Ver como renovar',
+      texto: 'O token do GitHub que dispara as buscas vence em ' + dias + (dias === 1 ? ' dia' : ' dias') + ' (' + brDataCompleta(exp) + '). Renove antes, para as buscas não voltarem a atrasar.' };
+  }
+  return null;
+}
+
 function agendaProximos(dias = 7) {
   const itens = [];
   visiveis().forEach(im => {
@@ -728,13 +761,14 @@ async function lerComRetry(fabrica) {
 }
 
 async function carregarTudo() {
-  const [rf, ri, rp, rc, rs, rz] = await Promise.all([
+  const [rf, ri, rp, rc, rs, rz, rd] = await Promise.all([
     lerComRetry(() => sb.from('filtros').select('*').order('criado_em', { ascending: false })),
     lerComRetry(() => sb.from('meus_imoveis').select('*').order('atualizado_em', { ascending: false }).limit(3000)),
     lerComRetry(() => sb.from('perfil_usuario').select('*').maybeSingle()),
     lerComRetry(() => sb.from('custo_imovel').select('*')),
     lerComRetry(() => sb.from('status_execucao').select('*').order('executado_em', { ascending: false }).limit(12)),
     lerComRetry(() => sb.from('prazo_imovel').select('imovel_id,data_hora,origem')),
+    lerComRetry(() => sb.from('disparo_estado').select('*').maybeSingle()),
   ]);
   // Leitura que falhou NÃO apaga o que já estava na tela, e o painel não afirma que "não há nada":
   // marca a falha pra mostrar um aviso em vez de um estado vazio enganoso.
@@ -744,6 +778,7 @@ async function carregarTudo() {
   if (!rp.error) S.perfil = rp.data || null;
   if (!rc.error) { S.custos = {}; (rc.data || []).forEach(c => { S.custos[c.imovel_id] = c; }); }
   if (!rs.error) S.status = rs.data || [];
+  S.disparo = rd.error ? null : (rd.data || null);   // não crítico: sem a tabela (agendar_buscas.sql não rodado), simplesmente não há aviso do token
   if (!rz.error) {   // prazos informados (licitação aberta e venda direta/online), compartilhados entre os usuários
     S.prazos = {};
     (rz.data || []).forEach(p => { const ms = Date.parse(p.data_hora); if (!isNaN(ms)) S.prazos[p.imovel_id] = { ms, origem: p.origem || 'manual' }; });
@@ -827,6 +862,11 @@ function renderStatus() {
         + '. Se passar de mais algumas horas, avise o administrador do sistema.';
     }
     faixas += '<section class="faixa faixa-aviso" role="status">' + ICONES.aviso + '<p>' + esc(texto) + '</p></section>';
+  }
+  const tk = estadoToken();
+  if (tk) {
+    faixas += '<section class="faixa ' + (tk.nivel === 'verm' ? 'faixa-critica' : 'faixa-aviso') + '" role="alert">' + ICONES.aviso + '<p>' + esc(tk.texto) + '</p>'
+      + '<button class="btn btn-sec btn-azul-contorno" data-acao="token-tutorial">' + tk.botao + '</button></section>';
   }
   faixa.innerHTML = faixas;
 }
@@ -1609,6 +1649,46 @@ async function removerPrazo() {
   } : null);
 }
 
+// ---------------- tutorial: renovar o token do GitHub ----------------
+// Dois comandos para copiar: guardar o token novo no Vault e, em seguida, disparar uma busca de teste.
+const COMANDOS_TOKEN = [
+  "select vault.update_secret((select id from vault.secrets where name = 'github_token'), 'COLE_O_NOVO_TOKEN');",
+  "select public.disparar_busca(false, 'horario');"
+];
+function abrirTutorialToken() {
+  const tk = estadoToken() || { tipo: 'vencendo' };
+  const erro = tk.tipo === 'erro' ? tk.codigo : null;
+  const dicaErro = erro === 404 ? 'O GitHub não achou o repositório. Confira o segredo <b>github_repo</b> no Vault (formato <b>usuario/repositorio</b>; se o repositório mudou de nome, atualize-o).'
+    : erro === 422 ? 'O GitHub recusou o pedido porque o arquivo <b>.github/workflows/atualizar-imoveis.yml</b> do repositório está desatualizado (falta a entrada "reserva"). Suba a versão mais nova do arquivo.'
+    : erro === 0 ? 'O GitHub não respondeu. Pode ser uma instabilidade passageira: o aviso some sozinho no próximo disparo bem-sucedido.'
+    : erro != null ? 'O GitHub respondeu <b>' + erro + '</b>. Confira o token, o nome do repositório e o arquivo do workflow; o aviso some sozinho no próximo disparo bem-sucedido.' : '';
+  const cmd = i => '<div class="codigo"><code>' + esc(COMANDOS_TOKEN[i]) + '</code><button type="button" class="btn btn-sec" data-acao="copiar-sql" data-cmd="' + i + '">Copiar</button></div>';
+  abrirModal(cabModal(tk.tipo === 'erro' ? 'Resolver o disparo da busca' : 'Renovar o token do GitHub')
+    + '<div class="modal-corpo">'
+    + (dicaErro ? '<div class="dica-erro" role="status">' + dicaErro + '</div>' : '')
+    + '<p class="ajuda" style="margin-top:12px">Este token só serve para o Supabase pedir a busca ao GitHub na hora exata. Renovar leva uns 5 minutos. Sem renovar, o sistema continua funcionando, mas as buscas voltam a depender do agendador do GitHub, que atrasa por horas. Só quem criou o token consegue renová-lo: se não foi você, avise essa pessoa.</p>'
+    + '<ol class="passos">'
+    + '<li><b>Abra a lista de tokens do GitHub:</b> <a href="https://github.com/settings/personal-access-tokens" target="_blank" rel="noopener">github.com/settings/personal-access-tokens</a> (no seu perfil: Settings, Developer settings, Personal access tokens, Fine-grained tokens).</li>'
+    + '<li><b>Clique no token do Radar</b> (o nome que você deu) e depois em <b>Regenerate token</b>. O novo token nasce com as mesmas permissões (só este repositório, Actions: leitura e escrita). Escolha a validade (até 1 ano) e <b>copie o token novo</b>: ele só aparece uma vez.</li>'
+    + '<li><b>Guarde no Supabase.</b> Abra o <b>SQL Editor</b>, cole o comando abaixo trocando <b>COLE_O_NOVO_TOKEN</b> pelo token, e clique em <b>Run</b>:' + cmd(0) + '</li>'
+    + '<li><b>Teste.</b> Rode este outro comando. Ele pede uma busca agora e confirma que o GitHub aceita o token novo:' + cmd(1) + '</li>'
+    + '<li><b>Apague as consultas</b> do SQL Editor, para o token não ficar salvo lá.</li>'
+    + '<li><b>Pronto.</b> Em até 5 minutos este aviso some sozinho (atualize a página). Se continuar, ele passa a mostrar o erro que o GitHub devolveu.</li>'
+    + '</ol>'
+    + '<details style="margin-top:14px"><summary style="cursor:pointer;font-weight:600;color:var(--azul)">Não achei o botão Regenerate token</summary>'
+    + '<p class="ajuda" style="margin-top:8px">Crie um novo: <b>Generate new token</b>, em <i>Repository access</i> escolha <b>Only select repositories</b> e marque este repositório, e em <i>Repository permissions</i> marque <b>Actions: Read and write</b>. Depois siga do passo 3.</p></details>'
+    + '</div>'
+    + '<div class="modal-rodape"><button type="button" class="btn btn-pri btn-lg" data-acao="fechar-modal">Fechar</button></div>', true);
+}
+async function copiarComando(i) {
+  const texto = COMANDOS_TOKEN[Number(i) || 0];
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(texto);
+    else { const t = document.createElement('textarea'); t.value = texto; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); }
+    toast(Number(i) === 0 ? 'Comando copiado. Troque COLE_O_NOVO_TOKEN pelo token antes de rodar.' : 'Comando copiado.');
+  } catch (e) { toast('Não consegui copiar. Selecione o texto e copie à mão.'); }
+}
+
 function abrirPerfil() {
   $('menu-conta').classList.add('oculto');
   abrirModal(cabModal('Meu nome')
@@ -1708,6 +1788,8 @@ document.addEventListener('click', async (e) => {
     case 'abrir-notificacoes': abrirNotificacoes(); break;
     case 'abrir-perfil': abrirPerfil(); break;
     case 'prazo': abrirPrazo(el.dataset.id); break;
+    case 'token-tutorial': abrirTutorialToken(); break;
+    case 'copiar-sql': await copiarComando(el.dataset.cmd); break;
     case 'prazo-salvar': await salvarPrazo(); break;
     case 'prazo-remover': await removerPrazo(); break;
     case 'perfil-salvar': {
