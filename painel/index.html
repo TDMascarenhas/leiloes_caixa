@@ -1054,20 +1054,34 @@ function ordenar(lista) {
     const d = im => { const s = situacao(im); return s.atual && s.atual.data ? s.atual.data.getTime() : Infinity; };
     l.sort((a, b) => d(a) - d(b));
   }
-  return l;
+  // imóveis novos (mesma regra da etiqueta "Novo") sempre antes dos que já existiam; dentro de cada bloco vale a ordem escolhida
+  return [...l.filter(ehNovo), ...l.filter(im => !ehNovo(im))];
 }
+
+// "Novo" = visto pela primeira vez nas últimas 48 horas (a mesma regra da etiqueta no card)
+function ehNovo(im) { return ehRecente(im.primeira_vez_visto); }
+function vistoEm(im) { return im.primeira_vez_visto ? new Date(im.primeira_vez_visto).getTime() : 0; }
 
 function renderLista(lista) {
   if (S.organizar !== 'bairro') return ordenar(lista).map(cardImovel).join('');
-  const grupos = new Map();
-  lista.forEach(im => { const b = nomeBairro(im); if (!grupos.has(b)) grupos.set(b, []); grupos.get(b).push(im); });
-  return [...grupos.keys()].sort((a, b) => a.localeCompare(b, 'pt-BR')).map(b => {
-    const itens = grupos.get(b).sort((x, y) => (situacao(x).valorAtual || 0) - (situacao(y).valorAtual || 0));
+  const cabGrupo = (titulo, itens, aria) => {
     const todosSel = itens.every(i => S.sel.has(i.id));
     return '<div class="grupo-cab"><label><input type="checkbox" data-acao="sel-grupo" data-ids="' + itens.map(i => i.id).join(',') + '"'
-      + (todosSel ? ' checked' : '') + ' aria-label="Selecionar os imóveis de ' + esc(b) + '">' + esc(b) + '</label><span>'
-      + itens.length + (itens.length === 1 ? ' imóvel' : ' imóveis') + '</span></div>' + itens.map(cardImovel).join('');
+      + (todosSel ? ' checked' : '') + ' aria-label="' + esc(aria) + '">' + esc(titulo) + '</label><span>'
+      + itens.length + (itens.length === 1 ? ' imóvel' : ' imóveis') + '</span></div>';
+  };
+  // os novos formam o primeiro grupo, do mais recente para o mais antigo; o resto segue agrupado por bairro
+  const novos = lista.filter(ehNovo).sort((a, b) => vistoEm(b) - vistoEm(a));
+  const grupos = new Map();
+  lista.filter(im => !ehNovo(im)).forEach(im => { const b = nomeBairro(im); if (!grupos.has(b)) grupos.set(b, []); grupos.get(b).push(im); });
+  let html = novos.length
+    ? cabGrupo('Novos nos últimos 2 dias', novos, 'Selecionar os imóveis novos') + novos.map(cardImovel).join('')
+    : '';
+  html += [...grupos.keys()].sort((a, b) => a.localeCompare(b, 'pt-BR')).map(b => {
+    const itens = grupos.get(b).sort((x, y) => (situacao(x).valorAtual || 0) - (situacao(y).valorAtual || 0));
+    return cabGrupo(b, itens, 'Selecionar os imóveis de ' + b) + itens.map(cardImovel).join('');
   }).join('');
+  return html;
 }
 
 // Bloco do prazo no card: licitação aberta (data, sem cronômetro) e venda direta/online (prazo final com cronômetro)
