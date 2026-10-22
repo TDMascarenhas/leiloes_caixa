@@ -1150,7 +1150,8 @@ function cardImovel(im) {
   }
   const tags = (ehRecente(im.primeira_vez_visto) ? '<span class="tag tag-novo">Novo</span>' : '')
     + (im.filtros_correspondentes || []).map(n => '<span class="tag tag-filtro">' + esc(n) + '</span>').join('')
-    + (im.financiamento ? '<span class="tag tag-fin">Aceita financiamento</span>' : '');
+    + (im.financiamento ? '<span class="tag tag-fin">Aceita financiamento</span>' : '')
+    + (im.aceita_fgts === true ? '<span class="tag tag-fin">Aceita FGTS</span>' : '');
   const endereco = (im.empreendimento ? im.empreendimento + ', ' : '') + (im.endereco || '');
   const num = im.numero_formatado || im.numero_imovel;
   let pracas = '';
