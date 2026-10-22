@@ -348,6 +348,9 @@ grant select, insert, update, delete on public.aviso_pendente to service_role;
 -- 1) a coluna nova
 alter table imoveis add column if not exists cep text;
 
+-- aceita FGTS (lido da seção "Formas de pagamento aceitas" da página de detalhe da Caixa)
+alter table imoveis add column if not exists aceita_fgts boolean;
+
 -- 2) a view precisa ser recriada: ela usa "im.*", e o Postgres fixa a lista de colunas
 --    na hora em que a view é criada, então a coluna nova só aparece depois disto
 drop view if exists meus_imoveis;
