@@ -266,7 +266,7 @@ def _texto_do_titulo(trecho: str) -> str | None:
 # campos que só vêm da página de detalhe (o CSV não traz)
 CAMPOS_DETALHE = ("valor_1_leilao", "data_1_leilao", "valor_2_leilao", "data_2_leilao",
                   "matricula", "inscricao_imobiliaria", "comarca", "edital", "leiloeiro",
-                  "foto_url", "numero_formatado", "empreendimento", "cep")
+                  "foto_url", "numero_formatado", "empreendimento", "cep", "aceita_fgts")
 
 # o <h5> também aparece em páginas de erro ("Nenhum imóvel encontrado...", sistema fora do ar):
 # isso nunca pode virar nome de empreendimento
@@ -322,6 +322,23 @@ def extrair_data_licitacao(texto: str) -> str | None:
     except ValueError:
         return None
     return dt.astimezone(timezone.utc).isoformat()
+
+
+def extrair_aceita_fgts(texto: str) -> bool | None:
+    """Lê, na seção "FORMAS DE PAGAMENTO ACEITAS" da página de detalhe, se a Caixa permite usar FGTS.
+    True  = a seção diz "Permite utilização de FGTS".
+    False = a seção diz que não permite, ou lista as formas aceitas sem citar o FGTS.
+    None  = não achei a seção (página de erro ou layout diferente): não sei, e não chuto.
+    Só olha dentro da seção, pra um texto solto da página nunca virar um "aceita" falso."""
+    m = re.search(r"FORMAS\s+DE\s+PAGAMENTO\s+ACEITAS(.{0,900}?)(?:REGRAS\s+PARA\s+PAGAMENTO|$)", texto, re.I | re.S)
+    if not m:
+        return None
+    secao = m.group(1)
+    if re.search(r"n[ãa]o\s+(?:permite|aceita)\s+(?:a\s+)?utiliza[çc][ãa]o\s+(?:de|do)\s+FGTS", secao, re.I):
+        return False
+    if re.search(r"permite\s+(?:a\s+)?utiliza[çc][ãa]o\s+(?:de|do)\s+FGTS", secao, re.I):
+        return True
+    return False
 
 
 def buscar_detalhe(numero_imovel: str) -> dict:
@@ -387,6 +404,7 @@ def buscar_detalhe(numero_imovel: str) -> dict:
         "leiloeiro": buscar(r"Leiloeiro\(a\)[:\s]*([^\n]{1,60}?)\s+Data d[oa]"),
         "_prazo_lido": extrair_data_licitacao(texto),   # só em licitação aberta; não vai pra tabela imoveis
         "foto_url": foto.group(1) if foto else None,
+        "aceita_fgts": extrair_aceita_fgts(texto),
     }
 
 
@@ -716,6 +734,13 @@ def montar_mensagem(im: dict, motivo: str, favorito: bool, imovel_id: str | None
     else:
         linhas.append(f"{_esc(im.get('modalidade') or 'Venda')}: <b>{formatar_valor_telegram(im.get('preco'))}</b>")
     linhas.append(f"Avaliação: {formatar_valor_telegram(im.get('valor_avaliacao'))}")
+    formas = []
+    if im.get("financiamento") is True:
+        formas.append("Financiamento: aceita")
+    if im.get("aceita_fgts") is True:
+        formas.append("FGTS: aceita")
+    if formas:
+        linhas.append(" · ".join(formas))
 
     botoes = []
     if imovel_id:
@@ -976,6 +1001,7 @@ def executar(args, problemas: list[tuple[str, str]]) -> dict:
             "desconto": im.get("desconto"),
             "modalidade": im.get("modalidade"),
             "financiamento": im.get("financiamento"),
+            "aceita_fgts": im.get("aceita_fgts"),
             "descricao": im.get("descricao"),
             "fatos": im.get("fatos"),
             "link": im.get("link"),
